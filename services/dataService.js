@@ -26,12 +26,29 @@ export async function connectDb() {
     }
 }
 
+export async function cleanupInvalidTokens() {
+  const validTokens = config.monitoredTokens.map(t => t.address.toLowerCase());
+  const result = await TokenData.deleteMany({
+    targetTokenAddress: { $nin: validTokens }
+  });
+  console.log(`Cleaned up ${result.deletedCount} invalid tokens from DB.`);
+}
+
 /**
  * Initializes (or updates) a token pair's metadata in the database.
  * This ensures an entry exists for each monitored pair.
  * @param {object} pairData - The initial metadata for the token pair from Dexscreener.
  */
 export async function initializeTokenData(pairData) {
+
+    const isValidToken = config.monitoredTokens.some(
+    t => t.address.toLowerCase() === pairData.targetTokenAddress.toLowerCase()
+    );
+
+    if (!isValidToken) {
+        throw new Error(`Token ${pairData.targetTokenSymbol} not in monitored list.`);
+    }
+
     try {
         const { 
             pairAddress, 
@@ -208,6 +225,17 @@ export async function getAllPairAddresses() {
 export async function updateSignalHistory(pairAddress, signal) {
     try {
         const tokenDoc = await TokenData.findOne({ pairAddress });
+        
+        if (!tokenDoc) return;
+
+  // === NEW VALIDATION ===
+        const isValidToken = config.monitoredTokens.some(
+            t => t.address.toLowerCase() === tokenDoc.targetTokenAddress.toLowerCase()
+        );
+        if (!isValidToken) {
+            console.warn(`Skipping invalid token: ${tokenDoc.targetTokenSymbol}`);
+            return;
+        }
         if (tokenDoc) {
             // Ensure the signal has a timestamp, add current if not present
             const signalToStore = { ...signal, timestamp: signal.timestamp || Date.now() };

@@ -299,7 +299,11 @@ export async function getMarketData(tokenConfig) {
             };
 
             console.log("the current price for ", targetTokenSymbol, marketData.currentPrice);   
-            // console.log("the market data for ", targetTokenSymbol, marketData);        
+            // console.log("the market data for ", targetTokenSymbol, marketData);    
+            if (marketData?.baseToken?.symbol.toUpperCase() !== targetTokenSymbol.toUpperCase()) {
+                console.warn(`[Mismatch] Expected ${targetTokenSymbol}, got ${marketData.baseToken.symbol}. Discarding.`);
+                return null;
+             }    
 
             return marketData;
         } else {
@@ -389,7 +393,7 @@ export async function getMarketData(tokenConfig) {
                     currentPriceFinal = pair.priceUsd ? safeParseFloat(Number(parseFloat(pair.priceUsd)).toFixed(8)) : null;
                     currentVolumeFinal = pair.volume && pair.volume.h24 ? safeParseFloat(parseFloat(pair.volume.h24).toFixed(2)) : null;
                     currentLiquidityFinal = pair.liquidity && pair.liquidity.usd ? safeParseFloat(parseFloat(pair.liquidity.usd).toFixed(2)) : null;
-                    historicalPrices = [];
+                    historicalPrices = [];                    
 
                     marketData = {
                         pairAddress: pair.pairAddress,
@@ -411,8 +415,18 @@ export async function getMarketData(tokenConfig) {
             console.error(`Dexscreener fetch failed for ${targetTokenSymbol}:`, error.message);
         }
     }
-    
-    console.log("the current price for ", targetTokenSymbol, marketData.currentPrice)
+    if (marketData) {
+        if (marketData.baseToken?.symbol?.toUpperCase() !== targetTokenSymbol.toUpperCase()) {
+            console.warn(`[Mismatch] Expected ${targetTokenSymbol}, got ${marketData.baseToken.symbol}. Discarding.`);
+            return null;
+        }
 
-    return marketData;
+        console.log(`[Resolved] ${targetTokenSymbol} resolved to ${marketData.baseToken.symbol}`);
+        console.log("the current price for", targetTokenSymbol, marketData.currentPrice);
+        return marketData;
+    } else {
+        console.warn(`[Error] Market data could not be fetched for ${targetTokenSymbol}.`);
+        return null;
+    }
+
 }

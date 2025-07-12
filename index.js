@@ -49,8 +49,18 @@ let currentSignals = [];
 async function signalGenerationLoop() {
     console.log(`\n--- [${new Date().toISOString()}] Starting Signal Generation Loop (Inference Only) ---`);
     const allSignals = [];
+    const seenSymbols = new Set();
 
     for (const tokenConfig of config.monitoredTokens) {
+
+        const tokenSymbol = tokenConfig.symbol.toUpperCase();
+        if (seenSymbols.has(tokenSymbol)) {
+            console.log(`[Skip Duplicate] Already processed ${tokenSymbol}, skipping...`);
+            continue;
+        }
+        seenSymbols.add(tokenSymbol);
+
+
         let signalResult = {
             signal: "Hold",
             pairName: tokenConfig.symbol,
@@ -100,19 +110,6 @@ async function signalGenerationLoop() {
                 targetTokenSymbol: tokenConfig.symbol,
                 targetTokenName: tokenConfig.name,
             });
-
-            // --- IMPORTANT CHANGE HERE ---
-            // Only update market data if price, volume, and liquidity are valid numbers
-            // if (currentPrice !== null && currentVolume !== null && currentLiquidity !== null) {
-            //      await dataService.updateMarketData(pairAddress, currentPrice, currentVolume, currentLiquidity);
-            // } else {
-            //     console.warn(`Missing or invalid price/volume/liquidity data for ${tokenConfig.symbol}. Skipping market data update.`);
-            //     signalResult.signal = "Error";
-            //     signalResult.signalDetails.push(`Missing or invalid current market data.`);
-            //     allSignals.push(signalResult);
-            //     continue; // Skip further processing for this token if core data is missing
-            // }
-
             
             // 3. Store current market data historically in MongoDB
             await dataService.updateMarketData(pairAddress, currentPrice, currentVolume, currentLiquidity);
@@ -146,14 +143,26 @@ async function signalGenerationLoop() {
 
             // signalResult.predictedTime = predictionResults.predictedTime;
             // signalResult.expiryTime = predictionResults.expiryTime;
-            if (signalResult.lstmPrediction !== null && signalResult.lstmPrediction !== 'N/A' ||
-                    signalResult.combinedPrediction !== null && signalResult.combinedPrediction !== 'N/A') {
-                    signalResult.predictedTime = predictionResults.predictedTime;
-                    signalResult.expiryTime = predictionResults.expiryTime;
-            }else{
-                signalResult.predictedTime = 'N/A';
-                signalResult.expiryTime =  'N/A';
-            }
+            // if (signalResult.lstmPrediction !== null && signalResult.lstmPrediction !== 'N/A' ||
+            //         signalResult.combinedPrediction !== null && signalResult.combinedPrediction !== 'N/A') {
+            //         signalResult.predictedTime = predictionResults.predictedTime;
+            //         signalResult.expiryTime = predictionResults.expiryTime;
+            // }else{
+            //     signalResult.predictedTime = 'N/A';
+            //     signalResult.expiryTime =  'N/A';
+            // }
+                if (
+                        signalResult.lstmPrediction !== 'N/A' &&
+                        signalResult.lstmPrediction !== 'NaN' ||
+                        signalResult.combinedPrediction !== 'N/A' &&
+                        signalResult.combinedPrediction !== 'NaN'
+                    ) {
+                        signalResult.predictedTime = predictionResults.predictedTime;
+                        signalResult.expiryTime = predictionResults.expiryTime;
+                    } else {
+                        signalResult.predictedTime = 'N/A';
+                        signalResult.expiryTime = 'N/A';
+                    }
 
             allSignals.push(signalResult);
             await dataService.updateSignalHistory(pairAddress, signalResult);
@@ -227,6 +236,7 @@ async function startSignalGeneratorAndApi() {
 
     // 1. Initial database connection (keep this awaited)
     await dataService.connectDb();
+    await dataService.cleanupInvalidTokens()
 
     // 2. Start Express API server first, so it's immediately available
     app.listen(PORT, () => {
