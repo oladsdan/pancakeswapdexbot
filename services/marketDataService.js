@@ -1,14 +1,22 @@
 import { request, gql } from 'graphql-request';
 import axios from 'axios';
 import config from '../config/default.json' assert { type: 'json' };
-import Moralis from 'moralis';
+// import Moralis from 'moralis'; // Still imported, but its price use is now strictly dependent on Alchemy success
 
 // Dexscreener Config
-const DEXSCREENER_API_SEARCH_BASE_URL = config.dexscreenerApiSearchBaseUrl;
+// const DEXSCREENER_API_SEARCH_BASE_URL = config.dexscreenerApiSearchBaseUrl;
+// New Dexscreener endpoint for token pairs by address
+const DEXSCREENER_TOKEN_PAIRS_BASE_URL = `https://api.dexscreener.com/token-pairs/v1/bsc`;
+
+// Alchemy Config
+const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY; // Ensure you set this in your environment variables
+const ALCHEMY_PRICES_BASE_URL = "https://api.g.alchemy.com/prices/v1";
+// New: Alchemy Historical Prices Endpoint
+const ALCHEMY_HISTORICAL_PRICES_BASE_URL = "https://api.g.alchemy.com/prices/v1";
 
 const quoteSymbol = config.preferredQuoteTokenSymbols.map(s => s.toUpperCase());
 
-const THEGRAPH_API_KEY = process.env.SUBGRAPH_API_KEY;
+const THEGRAPH_API_KEY = process.env.SUBGRAPH_API_KEY; // Ensure you set this in your environment variables
 const PANCAKESWAP_V3_SUBGRAPH_URL = 'https://gateway.thegraph.com/api/subgraphs/id/Hv1GncLY5docZoGtXjo4kwbTvxm3MAhVZqBZE4sUT9eZ';
 
 const SUBGRAPH_HEADERS = {
@@ -16,84 +24,14 @@ const SUBGRAPH_HEADERS = {
 };
 
 const QUOTE_TOKEN_ADDRESSES = Object.values(config.quoteTokenMap).map(address => address.toLowerCase());
-const HISTORICAL_DATA_DAYS = 60; // For RSI/MACD calculations
-
-// Moralis API Key from environment variables
-const MORALIS_API_KEY = process.env.MORALIS_API_KEY;
-
-// Initialize Moralis SDK once at the module level
-async function initializeMoralis() {
-    if (MORALIS_API_KEY && !Moralis.Core.isStarted) {
-        try {
-            await Moralis.start({
-                apiKey: MORALIS_API_KEY
-            });
-            console.log('Moralis SDK initialized successfully.');
-        } catch (e) {
-            console.error('Failed to initialize Moralis SDK:', e);
-        }
-    }
-}
-// Call initialization function immediately
-initializeMoralis();
-
-/**
- * Subgraph query to get token and its daily historical data for V3,
- * and separate query for relevant pools.
- */
-const GET_TOKEN_AND_POOL_DATA_V3 = gql`
-    query GetTokenAndPoolDataV3($tokenId: String!, $quoteToken0: String!, $quoteToken1: String!) {
-        token(id: $tokenId) {
-            id
-            name
-            symbol
-            decimals
-            derivedUSD # Current price in USD based on its pools
-            volumeUSD # Total accumulated volume across all pools for this token
-            totalValueLockedUSD # Total accumulated TVL across all pools for this token
-            txCount # Total transactions for this token
-
-            tokenDayData(orderBy: date, orderDirection: desc, first: ${HISTORICAL_DATA_DAYS}) {
-                date
-                priceUSD
-                volumeUSD # Daily volume in USD for this token
-                totalValueLockedUSD # Daily TVL in USD for this token
-            }
-        }
-
-        # Query for pools specifically involving our target token and common quote tokens
-        # We need to explicitly filter based on token0 or token1 being our target token
-        # and the other token being a quote token (WBNB or BUSD).
-        pools(
-            first: 10,
-            orderBy: totalValueLockedUSD,
-            orderDirection: desc,
-            where: {
-                or: [
-                    {
-                        token0_: { id: $tokenId },
-                        token1_: { id_in: [$quoteToken0, $quoteToken1] }
-                    },
-                    {
-                        token1_: { id: $tokenId },
-                        token0_: { id_in: [$quoteToken0, $quoteToken1] }
-                    }
-                ]
-            }
-        ) {
-            id
-            token0 { id symbol decimals }
-            token1 { id symbol decimals }
-            volumeUSD
-            totalValueLockedUSD
-            token0Price
-            token1Price
-            feesUSD
-        }
-    }
-`;
+// Use config for historical data days
+// const HISTORICAL_DATA_DAYS = config.historicalDataDays;
+const HISTORICAL_DATA_DAYS =60;
 
 
+
+
+// Utility function for safe float parsing
 function safeParseFloat(value) {
     if (value === undefined || value === null || value === '') {
         return null;
@@ -102,331 +40,242 @@ function safeParseFloat(value) {
     return isNaN(parsed) ? null : parsed;
 }
 
-// Utility function for sleeping
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-// Retry mechanism with exponential backoff
-async function retry(fn, retries = 3, delay = 1000) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            return await fn();
-        } catch (error) {
-            if (error.response && error.response.status === 429) {
-                console.warn(`Rate limit hit (429). Retrying in ${delay / 1000}s... (Attempt ${i + 1}/${retries})`);
-                await sleep(delay);
-                delay *= 2;
-            } else {
-                throw error;
-            }
+// GraphQL query for PancakeSwap V3 Subgraph to get volume and liquidity
+const GET_PAIR_DATA_QUERY = gql`
+    query GetPairData($pairAddress: ID!) {
+        pool(id: $pairAddress) {
+            totalValueLockedUSD
+            volumeUSD
         }
     }
-    throw new Error(`Failed after ${retries} retries due to persistent rate limiting.`);
-}
+`;
 
+// fetches data from alchemy den proceed to dexscreener
 export async function getMarketData(tokenConfig) {
     const { address: targetTokenAddress, symbol: targetTokenSymbol, name: targetTokenName } = tokenConfig;
     const lowerCaseTokenAddress = targetTokenAddress.toLowerCase();
 
-    let marketData = null;
-    let historicalPrices = [];
-
     let currentPriceFinal = null;
     let currentVolumeFinal = null;
     let currentLiquidityFinal = null;
-    let pairAddressUsed = lowerCaseTokenAddress;
+    let fetchedPairDetails = null; // To store essential pair info from Dexscreener
+    let historicalPrices = []; // Initialize historical prices array
 
-    // --- 1. Try to fetch from PancakeSwap V3 Subgraph ---
-    console.log(`Attempting to fetch market data for ${targetTokenSymbol} from PancakeSwap V3 Subgraph...`);
-    try {
-        if (!THEGRAPH_API_KEY) {
-            console.warn("THEGRAPH_API_KEY is not set. Skipping Subgraph query.");
-            throw new Error("THEGRAPH_API_KEY not configured.");
-        }
+    // Map chainId for Alchemy (e.g., 'bsc' to 'bnb-mainnet')
+    const alchemyNetwork = config.targetChainId === 'bsc' ? 'bnb-mainnet' : config.targetChainId; // Add more mappings if needed
 
-        const variables = {
-            tokenId: lowerCaseTokenAddress,
-            quoteToken0: config.quoteTokenMap.WBNB.toLowerCase(),
-            quoteToken1: config.quoteTokenMap.BUSD.toLowerCase()
-        };
-
-        const subgraphResponse = await request(
-            PANCAKESWAP_V3_SUBGRAPH_URL,
-            GET_TOKEN_AND_POOL_DATA_V3,
-            variables,
-            SUBGRAPH_HEADERS
-        );
-
-        const token = subgraphResponse.token;
-        const pools = subgraphResponse.pools;
-
-        if (token) {
-            console.log(`Token data found for ${targetTokenSymbol} on V3 Subgraph.`);
-
-            let tokenPriceUsdFromBUSD = null;
-            for (let i = 0; i < pools.length; i++) {
-                const pool = pools[i];
-                const formattedPrice = Number(pool.token1Price).toFixed(6);
-                if (pool.token1.symbol === 'BUSD' && parseFloat(formattedPrice) < 10000) {
-                    tokenPriceUsdFromBUSD = Number(pool.token1Price).toFixed(6);
-                    break;
-                }
-            }
-
-            if (token.derivedUSD && Number(token.derivedUSD).toFixed(6) < 100000) {
-                currentPriceFinal = safeParseFloat(Number(token.derivedUSD).toFixed(6));
-            } else if (tokenPriceUsdFromBUSD !== null) {
-                currentPriceFinal = safeParseFloat(tokenPriceUsdFromBUSD);
-            }
-
-            // --- 1.1. Specific currentPrice Fallback: Subgraph Price -> Moralis -> Dexscreener ---
-            if (currentPriceFinal === null || isNaN(currentPriceFinal)) {
-                console.warn(`Subgraph price for ${targetTokenSymbol} is not valid. Attempting Moralis fallback for currentPrice.`);
-
-                // Try Moralis first for currentPriceFinal
-                try {
-                    if (MORALIS_API_KEY && Moralis.Core.isStarted) {
-                        const moralisResponse = await Moralis.EvmApi.token.getTokenPrice({
-                            "chain": config.targetChainIds,
-                            "address": lowerCaseTokenAddress,
-                            "include": "percent_change"
-                        });
-
-                        if (moralisResponse && moralisResponse.raw && moralisResponse.raw.usdPrice) {
-                            currentPriceFinal = safeParseFloat(moralisResponse.raw.usdPrice);
-                            console.log("price fetched from moralis", currentPriceFinal)
-                            console.log(`Successfully fetched current price for ${targetTokenSymbol} from Moralis (Subgraph fallback).`);
-                        } else {
-                            console.warn(`No price data found for ${targetTokenSymbol} on Moralis during currentPrice fallback.`);
-                        }
-                    } else {
-                        console.warn("Moralis SDK not initialized or API Key missing. Cannot use Moralis for currentPrice fallback.");
-                    }
-                } catch (moralisError) {
-                    console.error(`Moralis current price fetch failed for ${targetTokenSymbol} (Subgraph fallback):`, moralisError.message);
-                }
-
-                // If Moralis failed for currentPrice, then try Dexscreener
-                if (currentPriceFinal === null || isNaN(currentPriceFinal)) {
-                    console.warn(`Moralis currentPrice fallback failed. Attempting Dexscreener fallback for currentPrice.`);
-                    const queryString = `${targetTokenSymbol}/${quoteSymbol}`;
-                    const dexscreenerApiUrl = `${DEXSCREENER_API_SEARCH_BASE_URL}?q=${queryString}`;
-
-                    try {
-                        const response = await retry(async () => {
-                            return await axios.get(dexscreenerApiUrl, { timeout: config.dexscreenerTimeoutMs });
-                        }, 3, 1000);
-
-                        if (response.data && response.data.pairs && response.data.pairs.length > 0) {
-                            const preferredQuoteTokens = Object.values(config.quoteTokenMap).map(address => address.toLowerCase());
-                            const relevantPairs = response.data.pairs.filter(p =>
-                                p.chainId === config.chainId &&
-                                (preferredQuoteTokens.includes(p.baseToken.address.toLowerCase()) ||
-                                 preferredQuoteTokens.includes(p.quoteToken.address.toLowerCase()))
-                            );
-                            let pair = null;
-                            if (relevantPairs.length > 0) {
-                                pair = relevantPairs.sort((a, b) => b.liquidity.usd - a.liquidity.usd)[0];
-                            } else {
-                                pair = response.data.pairs.sort((a, b) => b.liquidity.usd - a.liquidity.usd)[0];
-                            }
-                            if (pair && pair.priceUsd) {
-                                currentPriceFinal = safeParseFloat(Number(pair.priceUsd));
-                                // currentPriceFinal = safeParseFloat(parseFloat(pair.priceUsd).toFixed(config.priceDecimals));
-                                console.log(`Successfully fetched current price for ${targetTokenSymbol} from Dexscreener (Subgraph fallback).`);
-                            }
-                        }
-                    } catch (dexscreenerError) {
-                        console.error(`Dexscreener initial price fetch failed after retries for ${targetTokenSymbol} (Subgraph fallback):`, dexscreenerError.message);
-                    }
-                }
-            }
-
-            currentVolumeFinal = safeParseFloat(Number(parseFloat(token.volumeUSD)).toFixed(2));
-            currentLiquidityFinal = safeParseFloat(Number(parseFloat(token.totalValueLockedUSD)).toFixed(2));
-
-            let mainPool = null;
-            if (pools && pools.length > 0) {
-                const relevantPools = pools.filter(p =>
-                    (p.token0.id === lowerCaseTokenAddress && QUOTE_TOKEN_ADDRESSES.includes(p.token1.id)) ||
-                    (p.token1.id === lowerCaseTokenAddress && QUOTE_TOKEN_ADDRESSES.includes(p.token0.id))
-                );
-
-                if (relevantPools.length > 0) {
-                    mainPool = relevantPools.sort((a, b) => parseFloat(b.totalValueLockedUSD) - parseFloat(a.totalValueLockedUSD))[0];
-                } else {
-                    mainPool = pools.sort((a, b) => parseFloat(b.totalValueLockedUSD) - parseFloat(a.totalValueLockedUSD))[0];
-                }
-
-                if (mainPool) {
-                    console.log(`Using data from most liquid pool for ${targetTokenSymbol}: ${mainPool.id}`);
-                    currentLiquidityFinal = safeParseFloat(parseFloat(mainPool.totalValueLockedUSD).toFixed(2));
-                    currentVolumeFinal = safeParseFloat(parseFloat(mainPool.volumeUSD).toFixed(2));
-                    pairAddressUsed = mainPool.id;
-
-                    let poolSpecificPrice = null;
-                    if (mainPool.token0.id === lowerCaseTokenAddress) {
-                        poolSpecificPrice = safeParseFloat(parseFloat(mainPool.token0Price).toFixed(config.priceDecimals));
-                    } else if (mainPool.token1.id === lowerCaseTokenAddress) {
-                        poolSpecificPrice = safeParseFloat(parseFloat(mainPool.token1Price).toFixed(config.priceDecimals));
-                    }
-                    // if (poolSpecificPrice !== null && !isNaN(poolSpecificPrice)) {
-                    //     currentPriceFinal = poolSpecificPrice;
-                    // }
-                }
-            }
-
-            if (token.tokenDayData && token.tokenDayData.length > 0) {
-                historicalPrices = token.tokenDayData
-                    .map(d => ({ date: d.date, price: parseFloat(d.priceUSD) }))
-                    .sort((a, b) => a.date - b.date);
-            }
-
-            if (historicalPrices.length < config.minHistoricalDataPoints) {
-                console.warn(`Insufficient historical data from Subgraph for ${targetTokenSymbol} (${historicalPrices.length} days, needed ${config.minHistoricalDataPoints}).`);
-                // Do not throw error here, allow overall fallbacks to try other sources for full data
-            }
-
-            marketData = {
-                pairAddress: pairAddressUsed,
-                chainId: config.targetChainId,
-                pairName: `${targetTokenSymbol}/${config.baseCurrencySymbol}`,
-                baseToken: { address: targetTokenAddress, symbol: targetTokenSymbol },
-                quoteToken: { address: config.quoteTokenMap.WBNB, symbol: "WBNB" },
-                currentPrice: currentPriceFinal,
-                currentVolume: currentVolumeFinal,
-                currentLiquidity: currentLiquidityFinal,
-                historicalPrices: historicalPrices,
-            };
-
-            console.log("the current price for ", targetTokenSymbol, marketData.currentPrice);   
-            // console.log("the market data for ", targetTokenSymbol, marketData);    
-            if (marketData?.baseToken?.symbol.toUpperCase() !== targetTokenSymbol.toUpperCase()) {
-                console.warn(`[Mismatch] Expected ${targetTokenSymbol}, got ${marketData.baseToken.symbol}. Discarding.`);
-                return null;
-             }    
-
-            return marketData;
-        } else {
-              console.warn(`No token data found for ${targetTokenSymbol} on V3 Subgraph.`);
-        }
-    } catch (subgraphError) {
-        console.error(`Subgraph query failed for ${targetTokenSymbol}:`, subgraphError.message);
-        if (subgraphError.response?.errors) {
-            console.error("Subgraph GraphQL Errors:", subgraphError.response.errors);
-        }
-        if (subgraphError.message.includes("401") || subgraphError.message.includes("403") || subgraphError.message.includes("Unauthorized")) {
-             throw { isAuthError: true, message: "Subgraph API Key Unauthorized" };
-        }
-    }
-
-
-    // --- 2. Overall Fallback: Try Moralis if Subgraph failed or had insufficient data ---
-    if (marketData === null) {
-        console.log(`Attempting to fetch price and basic market data for ${targetTokenSymbol} from Moralis (overall fallback)...`);
+    // --- 1. Attempt to fetch current price from Alchemy ---
+    if (ALCHEMY_API_KEY) {
         try {
-            if (!MORALIS_API_KEY || !Moralis.Core.isStarted) {
-                console.warn("Moralis SDK not initialized or API Key missing. Skipping Moralis query.");
+            console.log(`Attempting to fetch current price from Alchemy for ${targetTokenSymbol}...`);
+            const alchemyResponse = await axios.post(
+                `${ALCHEMY_PRICES_BASE_URL}/${ALCHEMY_API_KEY}/tokens/by-address`,
+                {
+                    addresses: [{ network: alchemyNetwork, address: targetTokenAddress }]
+                },
+                { timeout: 10000 }
+            );
+
+
+
+            const responseData = alchemyResponse.data?.data;
+
+            if (Array.isArray(responseData) && responseData.length > 0) {
+                const tokenEntry = responseData[0];
+                const usdPriceObj = tokenEntry.prices?.find(p => p.currency.toLowerCase() === 'usd');
+
+                if (usdPriceObj && usdPriceObj.value) {
+                    currentPriceFinal = safeParseFloat(usdPriceObj.value);
+                    console.log(`Current price fetched from Alchemy for ${targetTokenSymbol}: ${currentPriceFinal}`);
+                } else {
+                    console.warn(`Alchemy did not return USD price data for ${targetTokenSymbol}.`);
+                }
             } else {
-                const moralisResponse = await Moralis.EvmApi.token.getTokenPrice({
-                    "chain": config.targetChainIds,
-                    "address": lowerCaseTokenAddress,
-                    "include": "percent_change"
-                });
-
-                if (moralisResponse && moralisResponse.raw && moralisResponse.raw.usdPrice) {
-                    currentPriceFinal = safeParseFloat(moralisResponse.raw.usdPrice);
-                    currentVolumeFinal = null;
-                    currentVolumeFinal = safeParseFloat(moralisResponse.raw.pairTotalLiquidityUsd);
-                    historicalPrices = [];
-
-                    marketData = {
-                        pairAddress: lowerCaseTokenAddress,
-                        chainId: config.targetChainId,
-                        pairName: `${targetTokenSymbol}/USD`,
-                        baseToken: { address: targetTokenAddress, symbol: targetTokenSymbol },
-                        quoteToken: { address: config.baseCurrencyAddress, symbol: config.baseCurrencySymbol },
-                        currentPrice: currentPriceFinal,
-                        currentVolume: currentVolumeFinal,
-                        currentLiquidity: currentLiquidityFinal,
-                        historicalPrices: historicalPrices,
-                    };
-                    console.log(`Successfully fetched price for ${targetTokenSymbol} from Moralis.`);
-                } else {
-                    console.warn(`No price data found for ${targetTokenSymbol} on Moralis.`);
-                }
+                console.warn(`Alchemy response missing 'data' array or is empty for ${targetTokenSymbol}.`);
             }
-        } catch (moralisError) {
-            console.error(`Moralis fetch failed for ${targetTokenSymbol}:`, moralisError.message);
+        } catch (alchemyError) {
+            console.error(`Alchemy current price fetch failed for ${targetTokenSymbol}:`, alchemyError.message);
         }
-    }
-
-    // --- 3. Overall Fallback: Try Dexscreener if Moralis also failed (or was skipped) ---
-    if (marketData === null) {
-        console.log(`Attempting to fetch market data for ${targetTokenSymbol} from Dexscreener (overall fallback)...`);
-        try {
-            const queryString = `${targetTokenSymbol}/${quoteSymbol}`;
-            const dexscreenerApiUrl = `${DEXSCREENER_API_SEARCH_BASE_URL}?q=${queryString}`;
-
-            const response = await retry(async () => {
-                return await axios.get(dexscreenerApiUrl, { timeout: config.dexscreenerTimeoutMs });
-            }, 3, 1000);
-
-            if (!response.data || !response.data.pairs || response.data.pairs.length === 0) {
-                console.warn(`No pairs found for ${targetTokenSymbol} on Dexscreener.`);
-            } else {
-                const preferredQuoteTokens = Object.values(config.quoteTokenMap).map(address => address.toLowerCase());
-                const relevantPairs = response.data.pairs.filter(p =>
-                    p.chainId === config.chainId &&
-                    (preferredQuoteTokens.includes(p.baseToken.address.toLowerCase()) ||
-                     preferredQuoteTokens.includes(p.quoteToken.address.toLowerCase()))
-                );
-
-                let pair = null;
-                if (relevantPairs.length > 0) {
-                    pair = relevantPairs.sort((a, b) => b.liquidity.usd - a.liquidity.usd)[0];
-                } else {
-                    console.warn(`No preferred quote token pairs found for ${targetTokenSymbol} on Dexscreener. Taking most liquid pair.`);
-                    pair = response.data.pairs.sort((a, b) => b.liquidity.usd - a.liquidity.usd)[0];
-                }
-
-                if (pair) {
-                    currentPriceFinal = pair.priceUsd ? safeParseFloat(Number(parseFloat(pair.priceUsd)).toFixed(8)) : null;
-                    currentVolumeFinal = pair.volume && pair.volume.h24 ? safeParseFloat(parseFloat(pair.volume.h24).toFixed(2)) : null;
-                    currentLiquidityFinal = pair.liquidity && pair.liquidity.usd ? safeParseFloat(parseFloat(pair.liquidity.usd).toFixed(2)) : null;
-                    historicalPrices = [];                    
-
-                    marketData = {
-                        pairAddress: pair.pairAddress,
-                        chainId: pair.chainId,
-                        pairName: pair?.baseToken?.symbol + '/' + pair?.quoteToken?.symbol,
-                        baseToken: { address: pair.baseToken.address, symbol: pair.baseToken.symbol },
-                        quoteToken: { address: pair.quoteToken.address, symbol: pair.quoteToken.symbol },
-                        currentPrice: currentPriceFinal,
-                        currentVolume: currentVolumeFinal,
-                        currentLiquidity: currentLiquidityFinal,
-                        historicalPrices: historicalPrices,
-                    };
-                    console.log(`Successfully fetched data for ${targetTokenSymbol} from Dexscreener.`);
-                } else {
-                    console.warn(`No suitable pair found for ${targetTokenSymbol} on Dexscreener.`);
-                }
-            }
-        } catch (error) {
-            console.error(`Dexscreener fetch failed for ${targetTokenSymbol}:`, error.message);
-        }
-    }
-    if (marketData) {
-        if (marketData.baseToken?.symbol?.toUpperCase() !== targetTokenSymbol.toUpperCase()) {
-            console.warn(`[Mismatch] Expected ${targetTokenSymbol}, got ${marketData.baseToken.symbol}. Discarding.`);
-            return null;
-        }
-
-        console.log(`[Resolved] ${targetTokenSymbol} resolved to ${marketData.baseToken.symbol}`);
-        console.log("the current price for", targetTokenSymbol, marketData.currentPrice);
-        return marketData;
     } else {
-        console.warn(`[Error] Market data could not be fetched for ${targetTokenSymbol}.`);
+        console.warn('ALCHEMY_API_KEY is not set. Skipping Alchemy current price fetch.');
+    }
+
+    // --- STRICT CONDITION: If current price is not obtained from Alchemy, stop here ---
+    if (currentPriceFinal === null) {
+        console.error(`Alchemy failed to get current price for ${targetTokenSymbol}. Skipping further data fetches.`);
         return null;
     }
 
+
+    if (ALCHEMY_API_KEY) {
+        try {
+            console.log(`Attempting to fetch historical prices from Alchemy for ${targetTokenSymbol} (last ${HISTORICAL_DATA_DAYS} days)...`);
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(endDate.getDate() - HISTORICAL_DATA_DAYS);
+
+            const alchemyHistoricalResponse = await axios.post(
+                `${ALCHEMY_HISTORICAL_PRICES_BASE_URL}/${ALCHEMY_API_KEY}/tokens/historical`,
+                {
+
+                    network: alchemyNetwork,
+                    address: targetTokenAddress,
+                    startTime: startDate.toISOString(),
+                    endTime: endDate.toISOString()
+                },
+                { timeout: 15000 }
+            );
+            
+
+            const responseData = alchemyHistoricalResponse.data?.data;
+
+            if (Array.isArray(responseData)) {
+                historicalPrices = responseData.map(p => ({
+                    price: safeParseFloat(p.value),
+                    timestamp: new Date(p.timestamp)
+                })).filter(p => p.price !== null);
+
+                historicalPrices.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+                console.log(`Fetched ${historicalPrices.length} historical price points from Alchemy for ${targetTokenSymbol}.`);
+            } else {
+                console.warn(`Alchemy did not return valid historical price data array for ${targetTokenSymbol}.`);
+            }
+        } catch (alchemyHistoricalError) {
+            console.error(`Alchemy historical price fetch failed for ${targetTokenSymbol}:`, alchemyHistoricalError.message);
+        }
+    }
+
+
+
+    // --- 3. Attempt to fetch pair info, volume, and liquidity from Dexscreener ---
+    // This is attempted ONLY if Alchemy successfully provided a current price.
+    try {
+        console.log(`Attempting to fetch pair info, volume, and liquidity from Dexscreener for ${targetTokenSymbol}...`);
+        const response = await axios.get(
+            `${DEXSCREENER_TOKEN_PAIRS_BASE_URL}/${targetTokenAddress}`,
+            { timeout: 10000 }
+        );
+
+        // if (dexscreenerResponse.data && dexscreenerResponse.data.pairs && dexscreenerResponse.data.pairs.length > 0) {
+        //     // Filter for PancakeSwap pairs with WBNB as the preferred quote token
+        //    const pancakeswapWBNBPairs = response.data.filter(pair => {
+        //                    const isPancakeSwap = pair.dexId && pair.dexId.toLowerCase() === 'pancakeswap';
+        //                    const isWBNBQuote = pair.quoteToken?.symbol?.toUpperCase() === 'WBNB';
+        //                    const isCorrectWBNBAddress = pair.quoteToken?.address?.toLowerCase() === config.quoteTokenMap.WBNB.toLowerCase();
+           
+        //                    return isPancakeSwap && isWBNBQuote && isCorrectWBNBAddress;
+        //                });
+           
+
+        //     if (pancakeswapWBNBPairs.length > 0) {
+        //         // Sort by liquidity (USD) to prioritize the most liquid pair
+        //         const mostLiquidPair = pancakeswapWBNBPairs.sort((a, b) => {
+        //             const liquidityA = safeParseFloat(a.liquidity?.usd || 0);
+        //             const liquidityB = safeParseFloat(b.liquidity?.usd || 0);
+        //             return liquidityB - liquidityA;
+        //         })[0];
+
+        //         fetchedPairDetails = mostLiquidPair; // Store the selected Dexscreener pair
+
+        //         // Populate volume and liquidity
+        //         currentVolumeFinal = safeParseFloat(fetchedPairDetails.volume?.h24);
+        //         currentLiquidityFinal = safeParseFloat(fetchedPairDetails.liquidity?.usd);
+        //         console.log(`Volume and Liquidity fetched from Dexscreener for ${targetTokenSymbol}.`);
+
+        //     } else {
+        //         console.warn(`No suitable PancakeSwap WBNB pair found on Dexscreener for ${targetTokenSymbol}.`);
+        //     }
+        // } else {
+        //     console.warn(`Dexscreener did not return pair data for ${targetTokenSymbol}.`);
+        // }
+
+        if (!response.data || response.data.length === 0) {
+            console.warn(`No pairs found on Dexscreener for token address: ${targetTokenAddress}`);
+            return null;
+            }
+
+            
+                const pancakeswapWBNBPairs = response.data.filter(pair => {
+                const isPancakeSwap = pair.dexId && pair.dexId.toLowerCase() === 'pancakeswap';
+                const isWBNBQuote = pair.quoteToken?.symbol?.toUpperCase() === 'WBNB';
+                const isCorrectWBNBAddress = pair.quoteToken?.address?.toLowerCase() === config.quoteTokenMap.WBNB.toLowerCase();
+
+                return isPancakeSwap && isWBNBQuote && isCorrectWBNBAddress;
+            });
+
+            if (pancakeswapWBNBPairs.length === 0) {
+                console.warn(`No PancakeSwap WBNB pairs found for token address: ${targetTokenAddress}`);
+                return null;
+            }
+
+             const mostLiquidPair = pancakeswapWBNBPairs.sort((a, b) => {
+                const liquidityA = safeParseFloat(a.liquidity?.usd || 0);
+                const liquidityB = safeParseFloat(b.liquidity?.usd || 0);
+                return liquidityB - liquidityA;
+            })[0];
+
+            fetchedPairDetails = mostLiquidPair; // Store the selected Dexscreener pair
+
+            currentVolumeFinal = safeParseFloat(fetchedPairDetails.volume?.h24) || null;
+            currentLiquidityFinal = safeParseFloat(fetchedPairDetails.liquidity?.usd) || null;
+
+
+
+    } catch (dexscreenerError) {
+        console.error(`Dexscreener fetch failed for ${targetTokenSymbol}:`, dexscreenerError.message);
+    }
+
+    // --- 4. Attempt to fetch volume and liquidity from Subgraph (if needed) ---
+    // This runs ONLY if we successfully identified a pair from Dexscreener AND
+    // Alchemy provided a price, but volume/liquidity are still missing.
+    if (fetchedPairDetails && (currentVolumeFinal === null || currentLiquidityFinal === null) && THEGRAPH_API_KEY) {
+        try {
+            console.log(`Attempting to fetch volume/liquidity from Subgraph for ${targetTokenSymbol}...`);
+            const subgraphResponse = await request({
+                url: PANCAKESWAP_V3_SUBGRAPH_URL,
+                document: GET_PAIR_DATA_QUERY,
+                variables: { pairAddress: fetchedPairDetails.pairAddress.toLowerCase() }, // Subgraph IDs are often lowercase
+                requestHeaders: SUBGRAPH_HEADERS
+            });
+
+            if (subgraphResponse.pool) {
+                if (currentVolumeFinal === null && subgraphResponse.pool.volumeUSD) {
+                    currentVolumeFinal = safeParseFloat(subgraphResponse.pool.volumeUSD);
+                    console.log(`Volume fetched from Subgraph for ${targetTokenSymbol}: ${currentVolumeFinal}`);
+                }
+                if (currentLiquidityFinal === null && subgraphResponse.pool.totalValueLockedUSD) {
+                    currentLiquidityFinal = safeParseFloat(subgraphResponse.pool.totalValueLockedUSD);
+                    console.log(`Liquidity fetched from Subgraph for ${targetTokenSymbol}: ${currentLiquidityFinal}`);
+                }
+            } else {
+                console.warn(`Subgraph did not return pool data for ${fetchedPairDetails.pairAddress}.`);
+            }
+        } catch (subgraphError) {
+            console.error(`Subgraph fetch failed for ${targetTokenSymbol}:`, subgraphError.message);
+        }
+    } else if (!THEGRAPH_API_KEY && fetchedPairDetails && (currentVolumeFinal === null || currentLiquidityFinal === null)) {
+        console.warn('SUBGRAPH_API_KEY is not set. Skipping Subgraph fallback for volume/liquidity.');
+    }
+
+    // --- Construct the final marketData object if essential data is available ---
+    // The strict condition `currentPriceFinal !== null` is already handled at the start.
+    if (fetchedPairDetails) {
+        const marketData = {
+            pairAddress: fetchedPairDetails.pairAddress,
+            chainId: fetchedPairDetails.chainId,
+            pairName: `${fetchedPairDetails.baseToken.symbol}/${fetchedPairDetails.quoteToken.symbol}`,
+            baseToken: { address: fetchedPairDetails.baseToken.address, symbol: fetchedPairDetails.baseToken.symbol },
+            quoteToken: { address: fetchedPairDetails.quoteToken.address, symbol: fetchedPairDetails.quoteToken.symbol },
+            currentPrice: currentPriceFinal, // Guaranteed to be not null due to early exit condition
+            currentVolume: currentVolumeFinal,
+            currentLiquidity: currentLiquidityFinal,
+            historicalPrices: historicalPrices, // Now populated with Alchemy data
+        };
+        console.log(`Final market data compiled for ${targetTokenSymbol}.`);
+        return marketData;
+    } else {
+        console.error(`Could not find suitable pair details for ${targetTokenSymbol} after Dexscreener and Subgraph attempts.`);
+        return null;
+    }
 }

@@ -1,6 +1,6 @@
-
-import * as tf from "@tensorflow/tfjs-node";
-import * as dataService from './dataService.js';
+import * as  tf from "@tensorflow/tfjs-node";
+import * as  dataService from './dataService.js';
+import * as monitorService from './monitorService.js';
 import TI from 'technicalindicators';
 import config from '../config/default.json' assert { type: 'json' };
 import { XGBoost } from '@fractal-solutions/xgboost-js'; // Correct import for the new package
@@ -16,35 +16,163 @@ let xgboostModel = null; // This will now hold an instance of @fractal-solutions
 const LSTM_MODEL_PATH = 'file://./models/lstm_model';
 const XGBOOST_MODEL_PATH = './models/xgboost_model.json';
 
-function formatTwoDigits(number) {
-    return number < 10 ? '0' + number : number;
+// function formatTwoDigits(number) {
+//     return number < 10 ? '0' + number : number;
+// }
+
+export function getRoundedPredictionTime() {
+    const now = new Date(); // Get current time
+    const allowedUTCHours = [1, 5, 9, 13, 17, 21];
+
+    let predictedDate = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        now.getUTCHours(),
+        now.getUTCMinutes(),
+        now.getUTCSeconds(),
+        now.getUTCMilliseconds()
+    ));
+
+    const currentUTCHour = predictedDate.getUTCHours();
+
+    let targetUTCHour = allowedUTCHours[allowedUTCHours.length - 1]; // Default to 21 UTC (for wrap-around)
+    let moveBackOneDay = false;
+
+    // Find the latest allowed hour that is less than or equal to the current UTC hour
+    let foundInterval = false;
+    for (let i = allowedUTCHours.length - 1; i >= 0; i--) {
+        if (currentUTCHour >= allowedUTCHours[i]) {
+            targetUTCHour = allowedUTCHours[i];
+            foundInterval = true;
+            break;
+        }
+    }
+
+    // If no allowed hour is found (meaning currentUTCHour is earlier than the first allowed hour, e.g., 00:XX UTC)
+    // then snap to the last allowed hour of the previous day (21:00 UTC of yesterday).
+    if (!foundInterval) {
+        targetUTCHour = allowedUTCHours[allowedUTCHours.length - 1]; // This sets it to 21 UTC
+        moveBackOneDay = true;
+    }
+
+    // Set the predictedDate to the calculated target UTC hour and reset minutes, seconds, milliseconds
+    predictedDate.setUTCHours(targetUTCHour, 0, 0, 0);
+
+    // If we determined it should be the previous day's interval
+    if (moveBackOneDay) {
+        predictedDate.setUTCDate(predictedDate.getUTCDate() - 1);
+    }
+
+    // Expiry time is predictedDate + 30 minutes
+    const expiryDate = new Date(predictedDate.getTime() + (4 * 60 * 60 * 1000) + (30 * 60 * 1000));
+
+    return { predictedDate, expiryDate };
 }
+
+
+// function getRoundedPredictionTime(intervalMinutes = 30) {
+//   const now = new Date();
+//   const ms = now.getTime();
+
+//   const intervalMs = intervalMinutes * 60 * 1000;
+
+//   // Round DOWN to the previous interval
+//   const previousIntervalMs = Math.floor(ms / intervalMs) * intervalMs;
+//   const predictedDate = new Date(previousIntervalMs);
+
+//   // Set expiry, e.g., 4 hours after predicted time
+//   const expiryDate = new Date(predictedDate.getTime() + 4 * 60 * 60 * 1000);
+
+//   return { predictedDate, expiryDate };
+// }
+export function formatForNigeria(date) {
+    if (!(date instanceof Date) || isNaN(date)) {
+        return 'N/A'; // Handle invalid date inputs
+    }
+
+    const options = {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false, // Use 24-hour format
+        timeZone: 'Africa/Lagos' // Specify the timezone for WAT (UTC+1)
+    };
+
+    const formatter = new Intl.DateTimeFormat('en-GB', options);
+    const parts = formatter.formatToParts(date);
+
+    const year = parts.find(p => p.type === 'year').value;
+    const month = parts.find(p => p.type === 'month').value;
+    const day = parts.find(p => p.type === 'day').value;
+    const hour = parts.find(p => p.type === 'hour').value;
+    const minute = parts.find(p => p.type === 'minute').value;
+    const second = parts.find(p => p.type === 'second').value;
+
+    return `${year}.${month}.${day} ${hour}:${minute}:${second}`;
+}
+
+
+// export function formatForNigeria(date) {
+//     const options = {
+//         timeZone: 'Africa/Lagos',
+//         year: 'numeric',
+//         month: '2-digit',
+//         day: '2-digit',
+//         hour: '2-digit',
+//         minute: '2-digit',
+//         second: '2-digit',
+//         hour12: false,
+//     };
+//     const parts = new Intl.DateTimeFormat('en-GB', options).formatToParts(date);
+//     const get = (type) => parts.find(p => p.type === type)?.value;
+
+//     return `${get('year')}.${get('month')}.${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+// }
 
 
 // A function to create the Lstm Dataset
 function createLstmDataset(priceHistory, lookback = config.lstmLookbackPeriod) {
     const prices = priceHistory.map(d => d.price);
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const scaledPrices = prices.map(p => (p - minPrice) / (maxPrice - minPrice));
+    
     const X = []; // Features (sequences)
     const y = []; // Labels (next price)
 
-    for (let i = 0; i < prices.length - lookback; i++) {
-        X.push(prices.slice(i, i + lookback));
-        y.push(prices[i + lookback]);
+    // for (let i = 0; i < prices.length - lookback; i++) {
+    //     X.push(prices.slice(i, i + lookback));
+    //     y.push(prices[i + lookback]);
+    // }
+      for (let i = 0; i < scaledPrices.length - lookback; i++) {
+        X.push(scaledPrices.slice(i, i + lookback));
+        y.push(scaledPrices[i + lookback]);
     }
 
-    if (X.length === 0) {
-        return { X: tf.tensor([], [0, lookback, 1]), y: tf.tensor([], [0, 1]) };
+    // if (X.length === 0) {
+    //     return { X: tf.tensor([], [0, lookback, 1]), y: tf.tensor([], [0, 1]) };
+    // }
+     if (X.length === 0) {
+        return { X: tf.tensor([], [0, lookback, 1]), y: tf.tensor([], [0, 1]), minPrice, maxPrice };
     }
+
 
     const X_tensor = tf.tensor2d(X).reshape([-1, lookback, 1]);
     const y_tensor = tf.tensor2d(y, [y.length, 1]);
 
-    return { X: X_tensor, y: y_tensor };
+    // return { X: X_tensor, y: y_tensor };
+    return { X: X_tensor, y: y_tensor, minPrice, maxPrice };
 }
 
 
 function prepareXgboostData(priceHistory) {
     const prices = priceHistory.map(d => d.price);
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
     const enrichedData = priceHistory.map(d => ({ ...d }));
 
     const rsiPeriod = config.indicatorPeriodRSI;
@@ -87,16 +215,28 @@ function prepareXgboostData(priceHistory) {
                 currentData.macd,
                 currentData.macdSignal
             ]);
-            labels.push(nextPrice);
+            // labels.push(nextPrice);
+            // Scale the label (price)
+            const scaledLabel = (nextPrice - minPrice) / (maxPrice - minPrice);
+            labels.push(scaledLabel);
         }
     }
+    
 
+    // return {
+    //     enrichedData: filteredData,
+    //     X: features,
+    //     y: labels
+    // };
     return {
         enrichedData: filteredData,
         X: features,
-        y: labels
+        y: labels,
+        minPrice,
+        maxPrice
     };
 }
+
 
 // Function to build the LSTM model
 function buildLstmModel(lookback) {
@@ -107,6 +247,7 @@ function buildLstmModel(lookback) {
     model.compile({ optimizer: tf.train.adam(), loss: 'meanSquaredError' });
     return model;
 }
+
 
 // Train the LSTM model (called by retrainModels)
 async function _trainLstmModel(X_train, y_train, epochs = config.lstmTrainingEpochs) {
@@ -128,14 +269,21 @@ async function _trainLstmModel(X_train, y_train, epochs = config.lstmTrainingEpo
 }
 
 // Make an LSTM prediction
-function predictLstm(inputSequence) {
+function predictLstm(inputSequence, minPrice, maxPrice) {
     if (!lstmModel) {
         console.warn('LSTM model not trained or loaded. Cannot make prediction.');
         return null;
     }
-    const inputTensor = tf.tensor2d([inputSequence]).reshape([1, inputSequence.length, 1]);
+    // const inputTensor = tf.tensor2d([inputSequence]).reshape([1, inputSequence.length, 1]);
+    // const prediction = lstmModel.predict(inputTensor);
+    // return prediction.dataSync()[0];
+    const scaledSequence = inputSequence.map(p => (p - minPrice) / (maxPrice - minPrice));
+    const inputTensor = tf.tensor2d([scaledSequence]).reshape([1, scaledSequence.length, 1]);
     const prediction = lstmModel.predict(inputTensor);
-    return prediction.dataSync()[0];
+    const scaledPred = prediction.dataSync()[0];
+
+    return scaledPred * (maxPrice - minPrice) + minPrice;
+
 }
 
 // === XGBoost Model functions (Updated for @fractal-solutions/xgboost-js) ===
@@ -160,7 +308,7 @@ async function _trainXgboostModel(X_train, y_train) {
 }
 
 
-function predictXgboost(inputFeatures) {
+function predictXgboost(inputFeatures, minPrice, maxPrice) {
     if (!xgboostModel) {
         console.warn('XGBoost model not trained or loaded. Cannot make prediction.');
         return null;
@@ -168,9 +316,12 @@ function predictXgboost(inputFeatures) {
 
     // @fractal-solutions/xgboost-js's predictBatch expects a 2D array of features.
     // For a single prediction, wrap the inputFeatures in an array.
-    const prediction = xgboostModel.predictBatch([inputFeatures]);
-    return prediction[0]; // Get the single predicted value from the array
+    // const prediction = xgboostModel.predictBatch([inputFeatures]);
+    // return prediction[0]; // Get the single predicted value from the array
+    const scaledPrediction = xgboostModel.predictBatch([inputFeatures])[0];
+    return scaledPrediction * (maxPrice - minPrice) + minPrice;
 }
+
 
 // -- Model saving and loading (Updated for @fractal-solutions/xgboost-js) --
 
@@ -242,7 +393,7 @@ export async function retrainModels() {
         for (const pairAddress of allTokenPairs) {
             try {
                 const priceHistory = await dataService.getPriceHistory(pairAddress);
-
+                console.log("this is pricehistory", priceHistory);
                 const minOverallData = Math.max(
                     config.historyRetentionLimit,
                     config.lstmLookbackPeriod + 1,
@@ -293,12 +444,13 @@ export async function retrainModels() {
 export async function generatePrediction(pairAddress) {
     let lstmPrediction = null;
     let xgboostPrediction = null;
+        console.log("generating prediction")
 
     try {
         const priceHistory = await dataService.getPriceHistory(pairAddress);
 
         const minOverallData = Math.max(
-            config.historyRetentionLimit,
+            // config.historyRetentionLimit,
             config.lstmLookbackPeriod,
             config.macdSlowPeriod,
             config.indicatorPeriodRSI
@@ -306,16 +458,18 @@ export async function generatePrediction(pairAddress) {
 
         if (!priceHistory || priceHistory.length < minOverallData) {
             return { combinedPrediction: null, lstmPrediction: null, xgboostPrediction: null, details: 'Not enough historical data for prediction.' };
+            console.log("skipping prediction,not enougn price history")
         }
 
         // --- LSTM Prediction ---
         if (lstmModel) {
+            const {minPrice, maxPrice} = createLstmDataset(priceHistory)
             const latestPriceSequence = priceHistory
                 .map(d => d.price)
                 .slice(-config.lstmLookbackPeriod);
 
             if (latestPriceSequence.length === config.lstmLookbackPeriod) {
-                lstmPrediction = predictLstm(latestPriceSequence);
+                lstmPrediction = predictLstm(latestPriceSequence, minPrice, maxPrice);
             } else {
                 console.warn(`Insufficient recent data for LSTM prediction for ${pairAddress}.`);
             }
@@ -326,7 +480,7 @@ export async function generatePrediction(pairAddress) {
 
         // --- XGBoost Prediction ---
         if (xgboostModel) {
-            const { enrichedData } = prepareXgboostData(priceHistory);
+            const { enrichedData, minPrice, maxPrice} = prepareXgboostData(priceHistory);
             const lastEnrichedData = enrichedData[enrichedData.length - 1];
 
             if (lastEnrichedData && typeof lastEnrichedData.rsi === 'number' && typeof lastEnrichedData.macd === 'number' && typeof lastEnrichedData.macdSignal === 'number') {
@@ -336,7 +490,7 @@ export async function generatePrediction(pairAddress) {
                     lastEnrichedData.macdSignal
                 ];
                 // predictXgboost expects a 2D array for predictBatch
-                xgboostPrediction = predictXgboost(latestXgboostFeatures);
+                xgboostPrediction = predictXgboost(latestXgboostFeatures, minPrice, maxPrice);
             } else {
                 console.warn(`Insufficient recent features for XGBoost prediction for ${pairAddress}.`);
             }
@@ -362,26 +516,49 @@ export async function generatePrediction(pairAddress) {
         }
 
          // --- Calculate Predicted Time and Expiry Time ---
-        const now = Date.now();
-        // Predicted time: Assuming prediction is for the next refresh interval
-        const predictedTimeMs = now + (config.refreshIntervalMs || 60000); // Default 1 minute if not in config
-        // Expiry time: Predicted time plus a validity duration
-        const expiryTimeMs = predictedTimeMs + (config.predictionValidityDurationMs || 300000); // Default 5 minutes if not in config
+        // const now = Date.now();
+        // // Predicted time: Assuming prediction is for the next refresh interval
+        // const predictedTimeMs = now + (config.refreshIntervalMs || 60000); // Default 1 minute if not in config
+        // // Expiry time: Predicted time plus a validity duration
+        // const expiryTimeMs = predictedTimeMs + (config.modelRetrainIntervalMs || 3600000); // Default 5 minutes if not in config
+        
 
-        const predictedDate = new Date(predictedTimeMs);
-        const expiryDate = new Date(expiryTimeMs);
+        // const predictedDate = new Date(predictedTimeMs);
+        // const expiryDate = new Date(expiryTimeMs);
 
-        // Format predictedTime as YYYY.MM.DD HH:mm:ss
-        const predictedTime = `${predictedDate.getFullYear()}.${formatTwoDigits(predictedDate.getMonth() + 1)}.${formatTwoDigits(predictedDate.getDate())} ${formatTwoDigits(predictedDate.getHours())}:${formatTwoDigits(predictedDate.getMinutes())}:${formatTwoDigits(predictedDate.getSeconds())}`;
+       const { predictedDate, expiryDate } = getRoundedPredictionTime();
 
-        // Format expiryTime as YYYY.MM.DD HH:mm:ss
-        const expiryTime = `${expiryDate.getFullYear()}.${formatTwoDigits(expiryDate.getMonth() + 1)}.${formatTwoDigits(expiryDate.getDate())} ${formatTwoDigits(expiryDate.getHours())}:${formatTwoDigits(expiryDate.getMinutes())}:${formatTwoDigits(expiryDate.getSeconds())}`;
+        
+        const predictedTime = formatForNigeria(predictedDate);
+        const expiryTime = formatForNigeria(expiryDate);
+
+
+
+        //calculate target price (1.6% above current)
+        const currentPrice = priceHistory[priceHistory.length-1].price;
+        console.log("at prediction this is currentprice", currentPrice);
+        const targetPrice = currentPrice * 1.016;
+        // const targetDiffPercent = ((targetPrice / currentPrice - 1) * 100).toFixed(2);
+
+         // Update monitor with new target
+        monitorService.updateMonitorTarget(
+            pairAddress,
+            targetPrice,
+            predictedTime,
+            expiryTime
+        );
+
+        console.log("monitorService updated")
+
 
         return {
             combinedPrediction: combinedPrediction,
             lstmPrediction: lstmPrediction,
             xgboostPrediction: xgboostPrediction,
             details: details,
+            target_price_usdt:targetPrice.toFixed(5),
+            // target_diff_percent: `+${targetDiffPercent}%`,
+            current_price_usdt: currentPrice,
             predictedTime: predictedTime,
             expiryTime: expiryTime
         };

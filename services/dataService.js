@@ -5,6 +5,7 @@ import config from '../config/default.json' assert { type: 'json' };
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const HISTORY_RETENTION_LIMIT = config.historyRetentionLimit;
+const SignalHistoryLength = 5;
 
 /**
  * Establishes a connection to MongoDB.
@@ -26,13 +27,13 @@ export async function connectDb() {
     }
 }
 
-export async function cleanupInvalidTokens() {
-  const validTokens = config.monitoredTokens.map(t => t.address.toLowerCase());
-  const result = await TokenData.deleteMany({
-    targetTokenAddress: { $nin: validTokens }
-  });
-  console.log(`Cleaned up ${result.deletedCount} invalid tokens from DB.`);
-}
+// export async function cleanupInvalidTokens() {
+//   const validTokens = config.monitoredTokens.map(t => t.address.toLowerCase());
+//   const result = await TokenData.deleteMany({
+//     targetTokenAddress: { $nin: validTokens }
+//   });
+//   console.log(`Cleaned up ${result.deletedCount} invalid tokens from DB.`);
+// }
 
 /**
  * Initializes (or updates) a token pair's metadata in the database.
@@ -62,18 +63,10 @@ export async function initializeTokenData(pairData) {
             targetTokenName 
         } = pairData;
 
-        // Ensure proper object structure for baseToken and quoteToken
-        // const baseTokenAddress = baseToken.address;
-        // const baseTokenSymbol = baseToken.symbol;
-        // const targetTokenAddress = quoteToken.address; // For Dexscreener, quoteToken is often the one you're interested in
-        // const targetTokenSymbol = quoteToken.symbol;
-        // const targetTokenName = quoteToken.name || quoteToken.symbol; // Dexscreener might not always provide name
-        // Extract baseToken details from the pairData's baseToken object
+        
         const baseTokenAddressOfPair = baseToken.address;
         const baseTokenSymbolOfPair = baseToken.symbol;
 
-        // No need to derive targetTokenAddress/Symbol/Name from quoteToken here
-        // as they are now passed directly as `targetTokenAddress`, etc.
 
         let tokenDoc = await TokenData.findOne({ pairAddress });
 
@@ -90,6 +83,11 @@ export async function initializeTokenData(pairData) {
                 priceHistory: [],
                 volumeHistory: [],
                 liquidityHistory: [],
+                latestLstmPrediction: 'N/A',
+                latestXgboostPrediction: 'N/A',
+                latestCombinedPrediction: 'N/A',
+                predictionPredictedTime: 'N/A',
+                predictionExpiryTime: 'N/A',
                 lastUpdated: new Date()
             });
             console.log(`Initialized new token pair: ${pairName} (${pairAddress})`);
@@ -118,10 +116,44 @@ export async function initializeTokenData(pairData) {
  * @param {number} currentPrice - The current price of the token.
  * @param {number} currentVolume - The current 24h volume.
  * @param {number} currentLiquidity - The current total liquidity.
- */
-export async function updateMarketData(pairAddress, currentPrice, currentVolume, currentLiquidity) {
+//  */
+// export async function updateMarketData(pairAddress, currentPrice, currentVolume, currentLiquidity,) {
+//     try {
+//         const tokenDoc = await TokenData.findOne({ pairAddress });
+
+//         if (!tokenDoc) {
+//             console.warn(`Attempted to update non-existent token pair: ${pairAddress}. Initialize first.`);
+//             return;
+//         }
+
+//         const now = new Date();
+
+//         // Add new data points
+//         tokenDoc.priceHistory.push({ price: currentPrice, timestamp: now });
+//         tokenDoc.volumeHistory.push({ volume: currentVolume, timestamp: now });
+//         tokenDoc.liquidityHistory.push({ liquidity: currentLiquidity, timestamp: now });
+
+//         // Prune historical arrays to maintain a fixed size (HISTORY_RETENTION_LIMIT)
+//         if (tokenDoc.priceHistory.length > HISTORY_RETENTION_LIMIT) {
+//             tokenDoc.priceHistory = tokenDoc.priceHistory.slice(-HISTORY_RETENTION_LIMIT);
+//         }
+//         if (tokenDoc.volumeHistory.length > HISTORY_RETENTION_LIMIT) {
+//             tokenDoc.volumeHistory = tokenDoc.volumeHistory.slice(-HISTORY_RETENTION_LIMIT);
+//         }
+//         if (tokenDoc.liquidityHistory.length > HISTORY_RETENTION_LIMIT) {
+//             tokenDoc.liquidityHistory = tokenDoc.liquidityHistory.slice(-HISTORY_RETENTION_LIMIT);
+//         }
+
+//         tokenDoc.lastUpdated = now;
+//         await tokenDoc.save();
+//     } catch (error) {
+//         console.error(`Error updating market data for ${pairAddress}:`, error);
+//     }
+// }
+export async function updateMarketData(pairAddress, currentPrice, currentVolume, currentLiquidity, historicalPricesFromAlchemy) {
     try {
         const tokenDoc = await TokenData.findOne({ pairAddress });
+        // console.log("this is historical price", historicalPricesFromAlchemy);
 
         if (!tokenDoc) {
             console.warn(`Attempted to update non-existent token pair: ${pairAddress}. Initialize first.`);
@@ -130,26 +162,110 @@ export async function updateMarketData(pairAddress, currentPrice, currentVolume,
 
         const now = new Date();
 
-        // Add new data points
-        tokenDoc.priceHistory.push({ price: currentPrice, timestamp: now });
-        tokenDoc.volumeHistory.push({ volume: currentVolume, timestamp: now });
-        tokenDoc.liquidityHistory.push({ liquidity: currentLiquidity, timestamp: now });
+        // --- Handle Price History ---
+        let existingPriceHistory = tokenDoc.priceHistory || [];
+        const newCurrentPriceEntry = { price: currentPrice, timestamp: now };
 
-        // Prune historical arrays to maintain a fixed size (HISTORY_RETENTION_LIMIT)
-        if (tokenDoc.priceHistory.length > HISTORY_RETENTION_LIMIT) {
-            tokenDoc.priceHistory = tokenDoc.priceHistory.slice(-HISTORY_RETENTION_LIMIT);
+        // Combine existing history, newly fetched historical prices from Alchemy, and the very latest price
+        let combinedPriceHistory = [
+            ...existingPriceHistory,
+            ...(historicalPricesFromAlchemy || []),
+            newCurrentPriceEntry
+        ];
+
+        // Deduplicate and sort price history
+        // Use a Map to keep the latest entry for each unique timestamp
+        const priceHistoryMap = new Map();
+        for (const entry of combinedPriceHistory) {
+            const timestampKey = new Date(entry.timestamp).toISOString(); // Using ISO string for unique key
+            priceHistoryMap.set(timestampKey, { price: entry.price, timestamp: new Date(entry.timestamp) }); // Ensure Date object
         }
+
+        let updatedPriceHistory = Array.from(priceHistoryMap.values()).sort((a, b) => {
+            return a.timestamp.getTime() - b.timestamp.getTime();
+        });
+
+        // Filter by date: Retain only data within the last `historicalDataDays` from config
+        const relevantDaysAgo = new Date();
+        relevantDaysAgo.setDate(relevantDaysAgo.getDate() - config.historicalDataDays);
+        updatedPriceHistory = updatedPriceHistory.filter(entry =>
+            entry.timestamp.getTime() >= relevantDaysAgo.getTime()
+        );
+
+        // Limit by count: Trim the array to `HISTORY_RETENTION_LIMIT` (e.g., 200 entries), keeping the most recent.
+        if (updatedPriceHistory.length > HISTORY_RETENTION_LIMIT) {
+            updatedPriceHistory = updatedPriceHistory.slice(updatedPriceHistory.length - HISTORY_RETENTION_LIMIT);
+        }
+        tokenDoc.priceHistory = updatedPriceHistory;
+        console.log("price history updated");
+
+        // --- Handle Volume History ---
+        tokenDoc.volumeHistory.push({ volume: currentVolume, timestamp: now });
         if (tokenDoc.volumeHistory.length > HISTORY_RETENTION_LIMIT) {
             tokenDoc.volumeHistory = tokenDoc.volumeHistory.slice(-HISTORY_RETENTION_LIMIT);
         }
+
+        // --- Handle Liquidity History ---
+        tokenDoc.liquidityHistory.push({ liquidity: currentLiquidity, timestamp: now });
         if (tokenDoc.liquidityHistory.length > HISTORY_RETENTION_LIMIT) {
             tokenDoc.liquidityHistory = tokenDoc.liquidityHistory.slice(-HISTORY_RETENTION_LIMIT);
         }
 
+        // Update current values
+        tokenDoc.currentPrice = currentPrice;
+        tokenDoc.currentVolume = currentVolume;
+        tokenDoc.currentLiquidity = currentLiquidity;
+
         tokenDoc.lastUpdated = now;
         await tokenDoc.save();
+        console.log(`Market data updated for ${pairAddress} with ${tokenDoc.priceHistory.length} price points.`);
     } catch (error) {
         console.error(`Error updating market data for ${pairAddress}:`, error);
+    }
+}
+
+export async function updatePredictionData(pairAddress, predictionResults) {
+    try {
+        const tokenDoc = await TokenData.findOne({ pairAddress });
+
+        if (!tokenDoc) {
+            console.warn(`Token data not found for ${pairAddress}. Cannot update prediction data.`);
+            return;
+        }
+
+        // console.log("the predictionRESult in dataService",predictionResults)
+
+        // Update the prediction fields
+        tokenDoc.latestLstmPrediction = predictionResults.lstmPrediction;
+        tokenDoc.latestXgboostPrediction = predictionResults.xgboostPrediction;
+        tokenDoc.latestCombinedPrediction = predictionResults.combinedPrediction;
+        // tokenDoc.target_diff_percent = predictionResults.target_diff_percent;
+        tokenDoc.target_price_usdt = predictionResults.target_price_usdt;
+        tokenDoc.PriceOfTokenAtPrediction = predictionResults.current_price_usdt;
+        
+        if (
+                        predictionResults.lstmPrediction !== 'N/A' &&
+                        predictionResults.lstmPrediction !== 'NaN' ||
+                        predictionResults.combinedPrediction !== 'N/A' &&
+                        predictionResults.combinedPrediction !== 'NaN'
+            ) {
+                        tokenDoc.predictionPredictedTime = predictionResults.predictedTime;
+                        tokenDoc.predictionExpiryTime = predictionResults.expiryTime;
+                    } else {
+                        tokenDoc.predictionPredictedTime = 'N/A';
+                        tokenDoc.predictionExpiryTime = 'N/A';
+        }
+
+        // tokenDoc.predictionGeneratedTime = predictionResults.predictedTime; // Store the prediction's generated time
+        // tokenDoc.predictionExpiryTime = predictionResults.expiryTime;     // Store the prediction's expiry time
+        tokenDoc.lastUpdated = new Date(); // Also update general lastUpdated
+
+        await tokenDoc.save();
+
+        console.log(`Prediction data updated for ${pairAddress}.`);
+        // console.log(tokenDoc, "for the address")
+    } catch (error) {
+        console.error(`Error updating prediction data for ${pairAddress}:`, error);
     }
 }
 
@@ -241,7 +357,7 @@ export async function updateSignalHistory(pairAddress, signal) {
             const signalToStore = { ...signal, timestamp: signal.timestamp || Date.now() };
             tokenDoc.signalHistory.push(signalToStore);
 
-            if (tokenDoc.signalHistory.length > HISTORY_RETENTION_LIMIT) {
+            if (tokenDoc.signalHistory.length > SignalHistoryLength) {
                 tokenDoc.signalHistory.shift(); // Remove the oldest entry
             }
             tokenDoc.lastUpdated = Date.now();

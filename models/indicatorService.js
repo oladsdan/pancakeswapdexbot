@@ -281,34 +281,10 @@ export async function generateCombinedSignal(pairAddress, currentPrice, currentV
     const priceDiff = ((currentPrice - previousPrice) / previousPrice) * 100
     const direction = priceDiff >=0 ? 'UP' : 'DOWN';
 
-
-    //we add TP and SL
-     //fields for calculating stop loss
-    const PriceOfTokenAtPrediction = tokenData.PriceOfTokenAtPrediction;
-    const AiPredictedPrice = tokenData.latestCombinedPrediction;
-    const targetPriceProfit = PriceOfTokenAtPrediction * 1.016;
-
-    const targetDifference =(targetPriceProfit / currentPrice - 1) * 100;
-    const tpPercentage = targetDifference;
-    const slPercentage = Math.abs((currentPrice - AiPredictedPrice)/currentPrice) * 100;
-
-
-    const takeProfitPrice = currentPrice * (1 + tpPercentage/100);
-    const stopLossPrice = currentPrice * (1 - slPercentage/100);
-    const riskRewardRatio = slPercentage / tpPercentage;
-
-
-    //we add TTP and TSL
-    const RRR =2;
-    const TTP = ((targetPriceProfit-AiPredictedPrice)/AiPredictedPrice) * 100;
-    const TSL = TTP/2;
-
-
-
     //Get monitor status
     const monitorStatus = monitorService.getMonitorStatus(pairAddress);
     
-    // console.log("this is monitorstatus in indicatorService",monitorStatus )
+    console.log("this is monitorstatus in indicatorService",monitorStatus )
 
     
 
@@ -329,14 +305,6 @@ export async function generateCombinedSignal(pairAddress, currentPrice, currentV
         now_diff_percent: `${priceDiff.toFixed(2)}%`,
         hit_status: monitorStatus.hitStatus,
         hit_time: monitorStatus.hitTime,
-        target_diff_percent: `${monitorStatus.targetPriceDiff}%`,
-        tpPercentage,
-        slPercentage,
-        riskRewardRatio,
-        takeProfitPrice,
-        stopLossPrice,
-        TTP,
-        TSL,
         signalDetails // Pass the array of detailed reasons
     };
 }

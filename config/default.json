@@ -1,6 +1,6 @@
 {
   "apiPort": 3000,
-  "refreshIntervalMs": 300000,
+  "refreshIntervalMs": 45000,
   "historyRetentionLimit": 200,
 
   "dexscreenerApiSearchBaseUrl": "https://api.dexscreener.com/latest/dex/search", 
@@ -12,8 +12,8 @@
   "baseCurrencyAddress": "0xe9e7cea3dedca5984780bafc599bd69add087d56",
   "preferredQuoteTokenSymbols": ["WBNB"],
    "quoteTokenMap": { 
-    "WBNB": "0xbb4CdB9eD9B89d1BC54bdcEDd7b2d49a37c41cAb",
-    "BUSD": "0xe9e7cea3dedcA5984780Bafc599bD69ADd087D56" 
+    "WBNB": "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c",
+    "BUSD": "0xe9e7cea3dedcA5984780Bafc599bD69ADd087D56"
   },
 
   
@@ -28,6 +28,8 @@
   "dexscreenerCallDelayMs": 500,
   "dexscreenerRateLimitPauseMinutes": 5,
   "predictionValidityDurationMs": 300000,
+  "historicalDataDays": 60,
+  "modelRetrainIntervalMs": 14400000,
 
 
   "monitoredTokens": [
@@ -521,6 +523,12 @@
       "decimals": 18
     },
     {
+      "symbol": "CAKE",
+      "name": "PancakeSwap",
+      "address": "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82",
+      "decimals": 18
+    },
+    {
       "symbol": "ASR",
       "name": "ASR",
       "address": "0x80D5f92C2c8C682070C95495313dDB680B267320",
@@ -829,7 +837,7 @@
   ],
 
   "rsiOversold": 30,
-  "rsiOverbought": 70,
+  "rsiOverbought": 60,
   "indicatorPeriodRSI": 14,
 
   "macdFastPeriod": 12,
@@ -838,6 +846,7 @@
 
   "priceChangeLookbackMinutesShort": 5,
   "priceChangeThresholdShort": 0.01,
+  "priceChangeLookbackHoursShort": 6,
 
   "volumeLookbackMinutes": 60,
   "volumeIncreaseFactor": 0.2,
@@ -851,8 +860,6 @@
 
   "lstmLookbackPeriod": 10,
   "lstmTrainingEpochs": 50,
-  "xgboostMinDataPoints": 60,
-
-  "modelRetrainIntervalMs": 14400000,  
+  "xgboostMinDataPoints": 60, 
   "initialModelTrainingDelayMs": 5000
 }

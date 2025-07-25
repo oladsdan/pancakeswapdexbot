@@ -12,6 +12,15 @@ const tokenDataSchema = new mongoose.Schema({
     targetTokenSymbol: { type: String, required: true },
     targetTokenName: { type: String, required: true },
     pairName: { type: String, required: true }, // e.g., WBNB/BUSD
+    // target_diff_percent:{type: mongoose.Schema.Types.Mixed},
+    target_price_usdt:{type: mongoose.Schema.Types.Mixed},
+
+    PriceOfTokenAtPrediction:{type: mongoose.Schema.Types.Mixed},
+    currentPrice:{type: mongoose.Schema.Types.Mixed},
+    currentVolume:{type: mongoose.Schema.Types.Mixed},
+    currentLiquidity:{type: mongoose.Schema.Types.Mixed},
+
+
 
     // Historical data arrays
     priceHistory: [{
@@ -26,6 +35,38 @@ const tokenDataSchema = new mongoose.Schema({
         liquidity: Number, // Total liquidity in USD (from Dexscreener)
         timestamp: { type: Date, default: Date.now }
     }],
+    
+
+    latestLstmPrediction: { type: mongoose.Schema.Types.Mixed, default: 'N/A' },
+    latestXgboostPrediction: { type: mongoose.Schema.Types.Mixed, default: 'N/A' },
+    latestCombinedPrediction: { type: mongoose.Schema.Types.Mixed, default: 'N/A' },
+    predictionPredictedTime: { type: String, default: 'N/A' },
+    predictionExpiryTime: { type: String, default: 'N/A' },
+    
+    targetPriceHistory: [{
+        predictedPrice: Number,
+        targetPrice: Number,
+        currentPriceAtPrediction: Number,
+        predictionTime: Date,
+        expiryTime: Date,
+        hitStatus: {
+            type: String,
+            enum: ['Not Reached', 'Reached', 'Expired'],
+            default: 'Not Reached'
+        },
+        hitTime: Date,
+        actualPriceAtExpiry: Number
+    }],
+
+    // Add to TokenData.js schema
+    predictionAccuracy: {
+        pastHits: { type: Number, default: 0 },
+        pastTotal: { type: Number, default: 0 },
+        currentHits: { type: Number, default: 0 },
+        currentTotal: { type: Number, default: 0 },
+        lastPredictionTime: { type: Date, default: Date.now },
+        lastResetTime: { type: Date, default: Date.now }
+    },
 
      // NEW: Historical signals (updated to include predictions)
 
@@ -42,10 +83,30 @@ const tokenDataSchema = new mongoose.Schema({
         volumeIncrease: String,
         liquidity: String,
         pumpedRecently: String,
+        tpPercentage: mongoose.Schema.Types.Mixed,
+        slPercentage: mongoose.Schema.Types.Mixed,
+        riskRewardRatio: mongoose.Schema.Types.Mixed,
+        takeProfitPrice: mongoose.Schema.Types.Mixed,
+        stopLossPrice: mongoose.Schema.Types.Mixed,
         signalDetails: [String],
         lstmPrediction: mongoose.Schema.Types.Mixed, // New field for LSTM prediction
         xgboostPrediction: mongoose.Schema.Types.Mixed, // New field for XGBoost prediction
-        combinedPrediction: mongoose.Schema.Types.Mixed, // New field for combined prediction
+        combinedPrediction: mongoose.Schema.Types.Mixed, 
+        targetPrice: Number,
+        predictionWindow: {
+            start: Date,
+            end: Date
+        },
+      
+        hitStatus: {
+            type: String,
+            enum: ['Not Reached', 'Reached', 'Expired'],
+            default: 'Not Reached'
+        },
+        hitTime: Date,
+        confidenceScore: Number,
+        // riskRewardRatio: Number,
+        
         timestamp: { type: Date, default: Date.now }
     }],
 
