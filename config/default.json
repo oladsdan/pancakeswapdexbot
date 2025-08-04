@@ -1,6 +1,6 @@
 {
   "apiPort": 3000,
-  "refreshIntervalMs": 45000,
+ "refreshIntervalMs": 14400000,
   "historyRetentionLimit": 200,
 
   "dexscreenerApiSearchBaseUrl": "https://api.dexscreener.com/latest/dex/search", 
@@ -32,18 +32,11 @@
   "modelRetrainIntervalMs": 14400000,
 
 
-  "monitoredTokens": [
-     {
-      "symbol": "FLOKI",
-      "name": "FLOKI",
-      "address": "0xfb5B838b6cfEEdC2873aB27866079AC55363D37E",
-      "decimals": 18
-    },
-
+  "monitoredTokens": [  
     {
       "symbol": "CAKE",
       "name": "PancakeSwap",
-      "address": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "addrss": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
       "decimals": 18
     },
     {
@@ -53,8 +46,8 @@
       "decimals": 18
     },
     {
-      "symbol": "Trunk",
-      "name": "Trunk",
+      "symbol": "W",
+      "name": "W",
       "address": "0x19683a9d2a31508847a026DfE77f53A05A084444",
       "decimals": 18
     },
@@ -62,12 +55,6 @@
       "symbol": "TUT",
       "name": "TUT",
       "address": "0xCAAE2A2F939F51d97CdFa9A86e79e3F085b799f3",
-      "decimals": 18
-    },
-    {
-      "symbol": "WIF",
-      "name": "WIF",
-      "address": "0x2DCE707c47Fd9C0f1833A281F45e3e41Ace2725B",
       "decimals": 18
     },
     {
@@ -88,6 +75,7 @@
       "address": "0x4BfAa776991E85e5f8b1255461cbbd216cFc714f",
       "decimals": 18
     },
+
     {
       "symbol": "FET",
       "name": "FET",
@@ -95,15 +83,9 @@
       "decimals": 18
     },
     {
-      "symbol": "ONE",
-      "name": "Harmony",
-      "address": "0x04BAf95Fd4C52fd09a56D840bAEe0AB8D7357bf0",
-      "decimals": 18
-    },
-    {
-      "symbol": "BONK",
-      "name": "BONK",
-      "address": "0xA697e272a73744b343528C3Bc4702F2565b2F422",
+      "symbol": "FLOKI",
+      "name": "FLOKI",
+      "address": "0xfb5B838b6cfEEdC2873aB27866079AC55363D37E",
       "decimals": 18
     },
     {
@@ -112,14 +94,8 @@
       "address": "0x9840652DC04fb9db2C43853633f0F62BE6f00f98",
       "decimals": 18
     },
-    {
-      "symbol": "HFT",
-      "name": "HFT",
-      "address": "0x44Ec807ce2F4a6F2737A92e985f318d035883e47",
-      "decimals": 18
-    },
    
-    {
+   {
       "symbol": "INJ",
       "name": "INJ",
       "address": "0xa2B726B1145A4773F68593CF171187d8EBe4d495",
@@ -129,18 +105,6 @@
       "symbol": "AAVE",
       "name": "Aave",
       "address": "0xfb6115445Bff7b52FeB98650C87f44907E58f802",
-      "decimals": 18
-    },
-    {
-      "symbol": "C98",
-      "name": "C98",
-      "address": "0xaEC945e04baF28b135Fa7c640f624f8D90F1C3a6",
-      "decimals": 18
-    },
-    {
-      "symbol": "MANTA",
-      "name": "MANTA",
-      "address": "0x8581cc815e40615998F4561F3e24e68066293595",
       "decimals": 18
     },
     {
@@ -241,12 +205,6 @@
       "decimals": 18
     },
     {
-      "symbol": "EDU",
-      "name": "EDU",
-      "address": "0xBdEAe1cA48894A1759A8374D63925f21f2Ee2639",
-      "decimals": 18
-    },
-    {
       "symbol": "BAKE",
       "name": "BAKE",
       "address": "0xE02dF9e3e622DeBdD69fb838bB799E3F168902c5",
@@ -259,21 +217,9 @@
       "decimals": 18
     },
     {
-      "symbol": "HIGH",
-      "name": "HIGH",
-      "address": "0x5f4Bde007Dc06b867f86EBFE4802e34A1fFEEd63",
-      "decimals": 18
-    },
-    {
       "symbol": "ORDI",
       "name": "ORDI",
       "address": "0xe2aE1a99bBd2eFab0a5C38f2146B7aCE61aBC5cE",
-      "decimals": 18
-    },
-    {
-      "symbol": "NFP",
-      "name": "NFP",
-      "address": "0x75E8ddB518bB757b4282cd5b83bb70d4101D12FB",
       "decimals": 18
     },
     {
@@ -322,12 +268,6 @@
       "symbol": "SOPH",
       "name": "SOPH",
       "address": "0x31DbA3c96481FDe3CD81C2aaF51F2D8bf618C742",
-      "decimals": 18
-    },
-    {
-      "symbol": "METIS",
-      "name": "METIS",
-      "address": "0xe552Fb52a4F19e44ef5A967632DBc320B0820639",
       "decimals": 18
     },
     {
@@ -505,12 +445,6 @@
       "decimals": 18
     },
     {
-      "symbol": "HYPER",
-      "name": "HYPER",
-      "address": "0xC9d23ED2ADB0f551369946BD377f8644cE1ca5c4",
-      "decimals": 18
-    },
-    {
       "symbol": "IOTX",
       "name": "IOTX",
       "address": "0x9678E42ceBEb63F23197D726B29b1CB20d0064E5",
@@ -526,12 +460,6 @@
       "symbol": "CAKE",
       "name": "PancakeSwap",
       "address": "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82",
-      "decimals": 18
-    },
-    {
-      "symbol": "ASR",
-      "name": "ASR",
-      "address": "0x80D5f92C2c8C682070C95495313dDB680B267320",
       "decimals": 18
     },
     {
@@ -571,12 +499,6 @@
       "decimals": 18
     },
     {
-      "symbol": "TRUMP",
-      "name": "TRUMP",
-      "address": "0x4eA98c1999575aaadfb38237Dd015c5E773F75a2",
-      "decimals": 18
-    },
-    {
       "symbol": "FORM",
       "name": "FORM",
       "address": "0x5b73A93b4E5e4f1FD27D8b3F8C97D69908b5E284",
@@ -608,7 +530,7 @@
     },
     {
       "symbol": "ATOM",
-      "name": "Cosmos",
+      "name": "ATOM",
       "address": "0x0Eb3a705fc54725037CC9e008bDede697f62F335",
       "decimals": 18
     },
@@ -636,12 +558,7 @@
       "address": "0xB0D502E938ed5f4df2E681fE6E419ff29631d62b",
       "decimals": 18
     },
-    {
-      "symbol": "QKC",
-      "name": "QKC",
-      "address": "0xA1434F1FC3F437fa33F7a781E041961C0205B5Da",
-      "decimals": 18
-    },
+   
     {
       "symbol": "COMP",
       "name": "COMP",
@@ -678,12 +595,7 @@
       "address": "0x7083609fCE4d1d8Dc0C979AAb8c869Ea2C873402",
       "decimals": 18
     },
-    {
-      "symbol": "NXPC",
-      "name": "NXPC",
-      "address": "0xf2b51CC1850fEd939658317a22d73d3482767591",
-      "decimals": 18
-    },
+  
     {
       "symbol": "BIFI",
       "name": "BIFI",
@@ -696,28 +608,11 @@
       "address": "0xAfF2e841851700D1Fc101995Ee6b81Ae21Bb87D7",
       "decimals": 18
     },
-    {
-      "symbol": "PHA",
-      "name": "PHA",
-      "address": "0x0112e557d400474717056C4e6D40eDD846F38351",
-      "decimals": 18
-    },
+  
     {
       "symbol": "HAEDAL",
       "name": "HAEDAL",
       "address": "0x3D9bE0aC1001cd81c32464276D863d2FFdCa4967",
-      "decimals": 18
-    },
-    {
-      "symbol": "MBL",
-      "name": "MBL",
-      "address": "0x18E37F96628dB3037d633FE4D469Fb1933a63C5B",
-      "decimals": 18
-    },
-    {
-      "symbol": "PARTI",
-      "name": "PARTI",
-      "address": "0x59264f02D301281f3393e1385c0aEFd446Eb0F00",
       "decimals": 18
     },
     {
@@ -778,12 +673,6 @@
       "symbol": "TRX",
       "name": "TRON",
       "address": "0xCE7de646e7208a4Ef112cb6ed5038FA6cC6b12e3",
-      "decimals": 18
-    },
-    {
-      "symbol": "OG",
-      "name": "OG",
-      "address": "0xf05E45aD22150677a017Fbd94b84fBB63dc9b44c",
       "decimals": 18
     },
     {

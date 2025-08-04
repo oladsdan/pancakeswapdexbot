@@ -275,23 +275,32 @@ export async function generateCombinedSignal(pairAddress, currentPrice, currentV
     // }
 
      const canBuy = rsiOk && (stochOk || macdCondition) && liquidityStatus.result;
-    if (canBuy) signal = "Buy";
-
+    // if (canBuy) signal = "Buy";
+    
+    
+    
+    // checking the status of tp
+    const monitorStatus = monitorService.getMonitorStatus(pairAddress);
     const previousPrice = priceHistory.length > 1 ? priceHistory[priceHistory.length -2].price : currentPrice;
-    const priceDiff = ((currentPrice - previousPrice) / previousPrice) * 100
+    const PriceOfTokenAtPrediction = tokenData.PriceOfTokenAtPrediction;
+    const priceDiff = ((currentPrice - PriceOfTokenAtPrediction) / PriceOfTokenAtPrediction) * 100
     const direction = priceDiff >=0 ? 'UP' : 'DOWN';
-
+    
 
     //we add TP and SL
      //fields for calculating stop loss
-    const PriceOfTokenAtPrediction = tokenData.PriceOfTokenAtPrediction;
+    const targetPrice = tokenData.latestCombinedPrediction;
     const AiPredictedPrice = tokenData.latestCombinedPrediction;
-    const targetPriceProfit = PriceOfTokenAtPrediction * 1.016;
+    // const targetPriceProfit = PriceOfTokenAtPrediction * 1.016;
 
-    const targetDifference =(targetPriceProfit / currentPrice - 1) * 100;
-    const tpPercentage = targetDifference;
-    const slPercentage = Math.abs((currentPrice - AiPredictedPrice)/currentPrice) * 100;
+    // const targetDifference =(targetPriceProfit / currentPrice - 1) * 100 * 0.9;
+    // const tpPercentage = 0.9 * monitorStatus.targetPriceDiff;
+    const slPercentage = (AiPredictedPrice-currentPrice)/currentPrice * 100* 0.6;
 
+
+    //targetdiff
+    const targetdiff = ((targetPrice - PriceOfTokenAtPrediction)/targetPrice * 100).toFixed(3);
+    const tpPercentage = 0.9 * targetdiff;
 
     const takeProfitPrice = currentPrice * (1 + tpPercentage/100);
     const stopLossPrice = currentPrice * (1 - slPercentage/100);
@@ -300,17 +309,16 @@ export async function generateCombinedSignal(pairAddress, currentPrice, currentV
 
     //we add TTP and TSL
     const RRR =2;
-    const TTP = ((targetPriceProfit-AiPredictedPrice)/AiPredictedPrice) * 100;
+    const TTP = ((AiPredictedPrice-AiPredictedPrice)/AiPredictedPrice) * 100;
     const TSL = TTP/2;
 
 
 
     //Get monitor status
-    const monitorStatus = monitorService.getMonitorStatus(pairAddress);
     
     // console.log("this is monitorstatus in indicatorService",monitorStatus )
 
-    
+    if(canBuy && targetdiff >= 0.7) signal = "Buy";
 
     return {
         signal,
@@ -329,7 +337,8 @@ export async function generateCombinedSignal(pairAddress, currentPrice, currentV
         now_diff_percent: `${priceDiff.toFixed(2)}%`,
         hit_status: monitorStatus.hitStatus,
         hit_time: monitorStatus.hitTime,
-        target_diff_percent: `${monitorStatus.targetPriceDiff}%`,
+        targetPrice,
+        target_diff_percent: `${targetdiff}%`,
         tpPercentage,
         slPercentage,
         riskRewardRatio,

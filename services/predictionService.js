@@ -65,27 +65,12 @@ export function getRoundedPredictionTime() {
     }
 
     // Expiry time is predictedDate + 30 minutes
-    const expiryDate = new Date(predictedDate.getTime() + (4 * 60 * 60 * 1000) + (30 * 60 * 1000));
+    const expiryDate = new Date(predictedDate.getTime() + (4 * 60 * 60 * 1000));
 
     return { predictedDate, expiryDate };
 }
 
 
-// function getRoundedPredictionTime(intervalMinutes = 30) {
-//   const now = new Date();
-//   const ms = now.getTime();
-
-//   const intervalMs = intervalMinutes * 60 * 1000;
-
-//   // Round DOWN to the previous interval
-//   const previousIntervalMs = Math.floor(ms / intervalMs) * intervalMs;
-//   const predictedDate = new Date(previousIntervalMs);
-
-//   // Set expiry, e.g., 4 hours after predicted time
-//   const expiryDate = new Date(predictedDate.getTime() + 4 * 60 * 60 * 1000);
-
-//   return { predictedDate, expiryDate };
-// }
 export function formatForNigeria(date) {
     if (!(date instanceof Date) || isNaN(date)) {
         return 'N/A'; // Handle invalid date inputs
@@ -135,47 +120,170 @@ export function formatForNigeria(date) {
 
 
 // A function to create the Lstm Dataset
+// function createLstmDataset(priceHistory, lookback = config.lstmLookbackPeriod) {
+//     const prices = priceHistory.map(d => d.price);
+//     const minPrice = Math.min(...prices);
+//     const maxPrice = Math.max(...prices);
+//     const scaledPrices = prices.map(p => (p - minPrice) / (maxPrice - minPrice));
+    
+//     const X = []; // Features (sequences)
+//     const y = []; // Labels (next price)
+//     const stepsAhead = 80 ; // 4 hours
+
+    
+//       for (let i = 0; i < scaledPrices.length - lookback - stepsAhead; i++) {
+//         X.push(scaledPrices.slice(i, i + lookback));
+//         y.push(scaledPrices[i + lookback + stepsAhead]);
+//     }
+
+   
+//      if (X.length === 0) {
+//         return { X: tf.tensor([], [0, lookback, 1]), y: tf.tensor([], [0, 1]), minPrice, maxPrice };
+//     }
+
+
+//     const X_tensor = tf.tensor2d(X).reshape([-1, lookback, 1]);
+//     const y_tensor = tf.tensor2d(y, [y.length, 1]);
+
+    
+//     return { X: X_tensor, y: y_tensor, minPrice, maxPrice };
+// }
+
+
+// function prepareXgboostData(priceHistory) {
+//     const prices = priceHistory.map(d => d.price);
+//     const minPrice = Math.min(...prices);
+//     const maxPrice = Math.max(...prices);
+//     const enrichedData = priceHistory.map(d => ({ ...d }));
+
+//     const rsiPeriod = config.indicatorPeriodRSI;
+//     if (prices.length >= rsiPeriod) {
+//         const rsiValues = TI.RSI.calculate({ values: prices, period: rsiPeriod });
+//         for (let i = 0; i < rsiValues.length; i++) {
+//             enrichedData[i + rsiPeriod - 1].rsi = rsiValues[i];
+//         }
+//     }
+
+//     if (prices.length >= config.macdSlowPeriod) {
+//         const macdResults = TI.MACD.calculate({
+//             values: prices,
+//             fastPeriod: config.macdFastPeriod,
+//             slowPeriod: config.macdSlowPeriod,
+//             signalPeriod: config.macdSignalPeriod
+//         });
+//         for (let i = 0; i < macdResults.length; i++) {
+//             enrichedData[i + config.macdSlowPeriod - 1].macd = macdResults[i].MACD;
+//             enrichedData[i + config.macdSlowPeriod - 1].macdSignal = macdResults[i].signal;
+//             enrichedData[i + config.macdSlowPeriod - 1].macdHistogram = macdResults[i].histogram;
+//         }
+//     }
+
+//     const minRequiredIndicatorLength = Math.max(rsiPeriod, config.macdSlowPeriod);
+//     const filteredData = enrichedData.slice(minRequiredIndicatorLength - 1).filter(d =>
+//         d.rsi !== undefined && d.macd !== undefined && d.macdSignal !== undefined
+//     );
+
+//     const features = [];
+//     const labels = [];
+//     const stepsAhead = 80;
+
+//     for (let i = 0; i < filteredData.length - stepsAhead; i++) {
+//         const currentData = filteredData[i];
+//         const nextPrice = filteredData[i + stepsAhead].price;
+
+//         if (typeof currentData.rsi === 'number' && typeof currentData.macd === 'number' && typeof currentData.macdSignal === 'number') {
+//             features.push([
+//                 currentData.rsi,
+//                 currentData.macd,
+//                 currentData.macdSignal
+//             ]);
+//             // labels.push(nextPrice);
+//             // Scale the label (price)
+//             const scaledLabel = (nextPrice - minPrice) / (maxPrice - minPrice);
+//             labels.push(scaledLabel);
+//         }
+//     }
+    
+
+//     // return {
+//     //     enrichedData: filteredData,
+//     //     X: features,
+//     //     y: labels
+//     // };
+//     return {
+//         enrichedData: filteredData,
+//         X: features,
+//         y: labels,
+//         minPrice,
+//         maxPrice
+//     };
+// }
+
+
 function createLstmDataset(priceHistory, lookback = config.lstmLookbackPeriod) {
     const prices = priceHistory.map(d => d.price);
+    const timestamps = priceHistory.map(d => new Date(d.timestamp).getTime());
+    const fourHoursMs = 4 * 60 * 60 * 1000;
+
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
     const scaledPrices = prices.map(p => (p - minPrice) / (maxPrice - minPrice));
-    
-    const X = []; // Features (sequences)
-    const y = []; // Labels (next price)
 
-    // for (let i = 0; i < prices.length - lookback; i++) {
-    //     X.push(prices.slice(i, i + lookback));
-    //     y.push(prices[i + lookback]);
-    // }
-      for (let i = 0; i < scaledPrices.length - lookback; i++) {
-        X.push(scaledPrices.slice(i, i + lookback));
-        y.push(scaledPrices[i + lookback]);
+    const X = [];
+    const y = [];
+
+    for (let i = 0; i < scaledPrices.length - lookback - 1; i++) {
+        const sequence = scaledPrices.slice(i, i + lookback);
+        const sequenceTime = timestamps[i + lookback - 1]; // End of input window
+
+        // Find the point closest to 4 hours ahead
+        let j = i + lookback;
+        while (j < timestamps.length && (timestamps[j] - sequenceTime) < fourHoursMs) {
+            j++;
+        }
+
+        if (j >= scaledPrices.length) continue;
+
+        const target = scaledPrices[j];
+
+        X.push(sequence);
+        y.push(target);
     }
 
-    // if (X.length === 0) {
-    //     return { X: tf.tensor([], [0, lookback, 1]), y: tf.tensor([], [0, 1]) };
-    // }
-     if (X.length === 0) {
-        return { X: tf.tensor([], [0, lookback, 1]), y: tf.tensor([], [0, 1]), minPrice, maxPrice };
+    if (X.length === 0) {
+        return {
+            X: tf.tensor([], [0, lookback, 1]),
+            y: tf.tensor([], [0, 1]),
+            minPrice,
+            maxPrice
+        };
     }
-
 
     const X_tensor = tf.tensor2d(X).reshape([-1, lookback, 1]);
     const y_tensor = tf.tensor2d(y, [y.length, 1]);
 
-    // return { X: X_tensor, y: y_tensor };
-    return { X: X_tensor, y: y_tensor, minPrice, maxPrice };
+    return {
+        X: X_tensor,
+        y: y_tensor,
+        minPrice,
+        maxPrice
+    };
 }
+
 
 
 function prepareXgboostData(priceHistory) {
     const prices = priceHistory.map(d => d.price);
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
+
     const enrichedData = priceHistory.map(d => ({ ...d }));
 
     const rsiPeriod = config.indicatorPeriodRSI;
+    const macdFast = config.macdFastPeriod;
+    const macdSlow = config.macdSlowPeriod;
+    const macdSignal = config.macdSignalPeriod;
+
     if (prices.length >= rsiPeriod) {
         const rsiValues = TI.RSI.calculate({ values: prices, period: rsiPeriod });
         for (let i = 0; i < rsiValues.length; i++) {
@@ -183,51 +291,54 @@ function prepareXgboostData(priceHistory) {
         }
     }
 
-    if (prices.length >= config.macdSlowPeriod) {
+    if (prices.length >= macdSlow) {
         const macdResults = TI.MACD.calculate({
             values: prices,
-            fastPeriod: config.macdFastPeriod,
-            slowPeriod: config.macdSlowPeriod,
-            signalPeriod: config.macdSignalPeriod
+            fastPeriod: macdFast,
+            slowPeriod: macdSlow,
+            signalPeriod: macdSignal,
         });
         for (let i = 0; i < macdResults.length; i++) {
-            enrichedData[i + config.macdSlowPeriod - 1].macd = macdResults[i].MACD;
-            enrichedData[i + config.macdSlowPeriod - 1].macdSignal = macdResults[i].signal;
-            enrichedData[i + config.macdSlowPeriod - 1].macdHistogram = macdResults[i].histogram;
+            enrichedData[i + macdSlow - 1].macd = macdResults[i].MACD;
+            enrichedData[i + macdSlow - 1].macdSignal = macdResults[i].signal;
+            enrichedData[i + macdSlow - 1].macdHistogram = macdResults[i].histogram;
         }
     }
 
-    const minRequiredIndicatorLength = Math.max(rsiPeriod, config.macdSlowPeriod);
-    const filteredData = enrichedData.slice(minRequiredIndicatorLength - 1).filter(d =>
+    const filteredData = enrichedData.filter(d =>
         d.rsi !== undefined && d.macd !== undefined && d.macdSignal !== undefined
     );
 
     const features = [];
     const labels = [];
+    const fourHoursMs = 4 * 60 * 60 * 1000;
 
     for (let i = 0; i < filteredData.length - 1; i++) {
-        const currentData = filteredData[i];
-        const nextPrice = filteredData[i + 1].price;
+        const current = filteredData[i];
+        const currentTime = new Date(current.timestamp).getTime();
 
-        if (typeof currentData.rsi === 'number' && typeof currentData.macd === 'number' && typeof currentData.macdSignal === 'number') {
-            features.push([
-                currentData.rsi,
-                currentData.macd,
-                currentData.macdSignal
-            ]);
-            // labels.push(nextPrice);
-            // Scale the label (price)
-            const scaledLabel = (nextPrice - minPrice) / (maxPrice - minPrice);
-            labels.push(scaledLabel);
+        // Find the index of the price 4 hours later
+        let j = i + 1;
+        while (j < filteredData.length) {
+            const futureTime = new Date(filteredData[j].timestamp).getTime();
+            if (futureTime - currentTime >= fourHoursMs) break;
+            j++;
         }
-    }
-    
 
-    // return {
-    //     enrichedData: filteredData,
-    //     X: features,
-    //     y: labels
-    // };
+        if (j >= filteredData.length) continue; // No valid future point
+
+        const futurePrice = filteredData[j].price;
+
+        features.push([
+            current.rsi,
+            current.macd,
+            current.macdSignal
+        ]);
+
+        const scaledLabel = (futurePrice - minPrice) / (maxPrice - minPrice);
+        labels.push(scaledLabel);
+    }
+
     return {
         enrichedData: filteredData,
         X: features,
@@ -236,6 +347,8 @@ function prepareXgboostData(priceHistory) {
         maxPrice
     };
 }
+
+
 
 
 // Function to build the LSTM model
@@ -441,61 +554,179 @@ export async function retrainModels() {
  * @param {string} pairAddress - The address of the token pair.
  * @returns {object} An object containing prediction results and details.
  */
+// export async function generatePrediction(pairAddress) {
+//     let lstmPrediction = null;
+//     let xgboostPrediction = null;
+//         console.log("generating prediction")
+
+//     try {
+//         const priceHistory = await dataService.getPriceHistory(pairAddress);
+
+//         const minOverallData = Math.max(
+//             config.historyRetentionLimit,
+//             config.lstmLookbackPeriod,
+//             config.macdSlowPeriod,
+//             config.indicatorPeriodRSI
+//         );
+
+//         if (!priceHistory || priceHistory.length < minOverallData) {
+//             return { combinedPrediction: null, lstmPrediction: null, xgboostPrediction: null, details: 'Not enough historical data for prediction.' };
+//             console.log("skipping prediction,not enougn price history")
+//         }
+
+//         // --- LSTM Prediction ---
+//         if (lstmModel) {
+//             const {minPrice, maxPrice} = createLstmDataset(priceHistory)
+//             const latestPriceSequence = priceHistory
+//                 .map(d => d.price)
+//                 .slice(-config.lstmLookbackPeriod);
+
+//             if (latestPriceSequence.length === config.lstmLookbackPeriod) {
+//                 lstmPrediction = predictLstm(latestPriceSequence, minPrice, maxPrice);
+//             } else {
+//                 console.warn(`Insufficient recent data for LSTM prediction for ${pairAddress}.`);
+//             }
+//         } else {
+//             console.warn(`LSTM model not loaded for ${pairAddress}. Skipping LSTM prediction.`);
+//         }
+
+
+//         // --- XGBoost Prediction ---
+//         if (xgboostModel) {
+//             const { enrichedData, minPrice, maxPrice} = prepareXgboostData(priceHistory);
+//             const lastEnrichedData = enrichedData[enrichedData.length - 1];
+
+//             if (lastEnrichedData && typeof lastEnrichedData.rsi === 'number' && typeof lastEnrichedData.macd === 'number' && typeof lastEnrichedData.macdSignal === 'number') {
+//                  const latestXgboostFeatures = [
+//                     lastEnrichedData.rsi,
+//                     lastEnrichedData.macd,
+//                     lastEnrichedData.macdSignal
+//                 ];
+//                 // predictXgboost expects a 2D array for predictBatch
+//                 xgboostPrediction = predictXgboost(latestXgboostFeatures, minPrice, maxPrice);
+//             } else {
+//                 console.warn(`Insufficient recent features for XGBoost prediction for ${pairAddress}.`);
+//             }
+//         } else {
+//             console.warn(`XGBoost model not loaded for ${pairAddress}. Skipping XGBoost prediction.`);
+//         }
+
+//         // --- Combine Predictions ---
+//         let combinedPrediction = null;
+//         let details = '';
+
+//         if (lstmPrediction !== null && xgboostPrediction !== null) {
+//             combinedPrediction = (lstmPrediction + xgboostPrediction) / 2;
+//             details = 'Combined prediction from LSTM and XGBoost.';
+//         } else if (lstmPrediction !== null) {
+//             combinedPrediction = lstmPrediction;
+//             details = 'Prediction from LSTM only (XGBoost model not ready or data insufficient).';
+//         } else if (xgboostPrediction !== null) {
+//             combinedPrediction = xgboostPrediction;
+//             details = 'Prediction from XGBoost only (LSTM model not ready or data insufficient).';
+//         } else {
+//             details = 'No valid predictions could be generated from either model.';
+//         }
+
+
+//        const { predictedDate, expiryDate } = getRoundedPredictionTime();
+
+        
+//         const predictedTime = formatForNigeria(predictedDate);
+//         const expiryTime = formatForNigeria(expiryDate);
+
+
+
+//         //calculate target price (1.6% above current)
+//         const currentPrice = priceHistory[priceHistory.length-1].price;
+//         console.log("at prediction this is currentprice", currentPrice);
+//         const targetPrice = currentPrice * 1.016;
+//         // const targetDiffPercent = ((targetPrice / currentPrice - 1) * 100).toFixed(2);
+
+//          // Update monitor with new target
+//         monitorService.updateMonitorTarget(
+//             pairAddress,
+//             targetPrice,
+//             predictedTime,
+//             expiryTime
+//         );
+
+//         console.log("monitorService updated")
+
+
+//         return {
+//             combinedPrediction: combinedPrediction,
+//             lstmPrediction: lstmPrediction,
+//             xgboostPrediction: xgboostPrediction,
+//             details: details,
+//             // target_price_usdt:targetPrice.toFixed(5),
+//             // target_diff_percent: `+${targetDiffPercent}%`,
+//             current_price_usdt: currentPrice,
+//             predictedTime: predictedTime,
+//             expiryTime: expiryTime
+//         };
+
+//     } catch (error) {
+//         console.error(`Error generating prediction for ${pairAddress}:`, error);
+//         return { combinedPrediction: null, lstmPrediction: null, xgboostPrediction: null, details: `Error generating prediction: ${error.message}`,
+//         predictedTime: 'N/A',
+//         expiryTime: 'N/A' };
+        
+//     }
+// }
+
 export async function generatePrediction(pairAddress) {
     let lstmPrediction = null;
     let xgboostPrediction = null;
-        console.log("generating prediction")
 
     try {
         const priceHistory = await dataService.getPriceHistory(pairAddress);
 
-        const minOverallData = Math.max(
-            // config.historyRetentionLimit,
-            config.lstmLookbackPeriod,
-            config.macdSlowPeriod,
-            config.indicatorPeriodRSI
+        const minRequired = Math.max(
+            config.historyRetentionLimit,
+            config.lstmLookbackPeriod + 1,
+            config.macdSlowPeriod + 1,
+            config.indicatorPeriodRSI + 1
         );
 
-        if (!priceHistory || priceHistory.length < minOverallData) {
-            return { combinedPrediction: null, lstmPrediction: null, xgboostPrediction: null, details: 'Not enough historical data for prediction.' };
-            console.log("skipping prediction,not enougn price history")
+        if (!priceHistory || priceHistory.length < minRequired) {
+            return {
+                combinedPrediction: null,
+                lstmPrediction: null,
+                xgboostPrediction: null,
+                details: 'Not enough historical data for prediction.'
+            };
         }
 
-        // --- LSTM Prediction ---
+        // === LSTM Prediction ===
         if (lstmModel) {
-            const {minPrice, maxPrice} = createLstmDataset(priceHistory)
-            const latestPriceSequence = priceHistory
-                .map(d => d.price)
-                .slice(-config.lstmLookbackPeriod);
+            const prices = priceHistory.map(d => d.price);
+            const timestamps = priceHistory.map(d => new Date(d.timestamp).getTime());
+            const lookback = config.lstmLookbackPeriod;
+            const minPrice = Math.min(...prices);
+            const maxPrice = Math.max(...prices);
 
-            if (latestPriceSequence.length === config.lstmLookbackPeriod) {
-                lstmPrediction = predictLstm(latestPriceSequence, minPrice, maxPrice);
-            } else {
-                console.warn(`Insufficient recent data for LSTM prediction for ${pairAddress}.`);
+            const latestIndex = prices.length - lookback - 1;
+            if (latestIndex >= 0) {
+                const inputSeq = prices.slice(latestIndex, latestIndex + lookback);
+                const scaled = inputSeq.map(p => (p - minPrice) / (maxPrice - minPrice));
+                const inputTensor = tf.tensor2d([scaled]).reshape([1, lookback, 1]);
+
+                const pred = lstmModel.predict(inputTensor);
+                const scaledPred = pred.dataSync()[0];
+                lstmPrediction = scaledPred * (maxPrice - minPrice) + minPrice;
             }
-        } else {
-            console.warn(`LSTM model not loaded for ${pairAddress}. Skipping LSTM prediction.`);
         }
 
-
-        // --- XGBoost Prediction ---
+        // === XGBoost Prediction ===
         if (xgboostModel) {
-            const { enrichedData, minPrice, maxPrice} = prepareXgboostData(priceHistory);
-            const lastEnrichedData = enrichedData[enrichedData.length - 1];
-
-            if (lastEnrichedData && typeof lastEnrichedData.rsi === 'number' && typeof lastEnrichedData.macd === 'number' && typeof lastEnrichedData.macdSignal === 'number') {
-                 const latestXgboostFeatures = [
-                    lastEnrichedData.rsi,
-                    lastEnrichedData.macd,
-                    lastEnrichedData.macdSignal
-                ];
-                // predictXgboost expects a 2D array for predictBatch
-                xgboostPrediction = predictXgboost(latestXgboostFeatures, minPrice, maxPrice);
-            } else {
-                console.warn(`Insufficient recent features for XGBoost prediction for ${pairAddress}.`);
+            const { enrichedData, minPrice, maxPrice } = prepareXgboostData(priceHistory);
+            const last = enrichedData[enrichedData.length - 1];
+            if (last && last.rsi && last.macd && last.macdSignal) {
+                const features = [last.rsi, last.macd, last.macdSignal];
+                const scaledPrediction = xgboostModel.predictBatch([features])[0];
+                xgboostPrediction = scaledPrediction * (maxPrice - minPrice) + minPrice;
             }
-        } else {
-            console.warn(`XGBoost model not loaded for ${pairAddress}. Skipping XGBoost prediction.`);
         }
 
         // --- Combine Predictions ---
@@ -515,18 +746,9 @@ export async function generatePrediction(pairAddress) {
             details = 'No valid predictions could be generated from either model.';
         }
 
-         // --- Calculate Predicted Time and Expiry Time ---
-        // const now = Date.now();
-        // // Predicted time: Assuming prediction is for the next refresh interval
-        // const predictedTimeMs = now + (config.refreshIntervalMs || 60000); // Default 1 minute if not in config
-        // // Expiry time: Predicted time plus a validity duration
-        // const expiryTimeMs = predictedTimeMs + (config.modelRetrainIntervalMs || 3600000); // Default 5 minutes if not in config
-        
 
-        // const predictedDate = new Date(predictedTimeMs);
-        // const expiryDate = new Date(expiryTimeMs);
-
-       const { predictedDate, expiryDate } = getRoundedPredictionTime();
+        // Target logic
+        const { predictedDate, expiryDate } = getRoundedPredictionTime();
 
         
         const predictedTime = formatForNigeria(predictedDate);
@@ -535,9 +757,11 @@ export async function generatePrediction(pairAddress) {
 
 
         //calculate target price (1.6% above current)
+        const tokendoc = await dataService.getTokenData(pairAddress);
+        const currentPriceofToken = tokendoc.currentPrice; 
         const currentPrice = priceHistory[priceHistory.length-1].price;
         console.log("at prediction this is currentprice", currentPrice);
-        const targetPrice = currentPrice * 1.016;
+        const targetPrice =combinedPrediction * 1.02 ;
         // const targetDiffPercent = ((targetPrice / currentPrice - 1) * 100).toFixed(2);
 
          // Update monitor with new target
@@ -552,23 +776,27 @@ export async function generatePrediction(pairAddress) {
 
 
         return {
-            combinedPrediction: combinedPrediction,
+            combinedPrediction: targetPrice,
             lstmPrediction: lstmPrediction,
             xgboostPrediction: xgboostPrediction,
             details: details,
-            target_price_usdt:targetPrice.toFixed(5),
+            // target_price_usdt:targetPrice.toFixed(5),
             // target_diff_percent: `+${targetDiffPercent}%`,
-            current_price_usdt: currentPrice,
+            current_price_usdt: currentPriceofToken,
             predictedTime: predictedTime,
             expiryTime: expiryTime
         };
 
     } catch (error) {
-        console.error(`Error generating prediction for ${pairAddress}:`, error);
-        return { combinedPrediction: null, lstmPrediction: null, xgboostPrediction: null, details: `Error generating prediction: ${error.message}`,
-        predictedTime: 'N/A',
-        expiryTime: 'N/A' };
-        
+        console.error(`❌ Error generating prediction for ${pairAddress}:`, error);
+        return {
+            combinedPrediction: null,
+            lstmPrediction: null,
+            xgboostPrediction: null,
+            details: `Error: ${error.message}`,
+            predictedTime: 'N/A',
+            expiryTime: 'N/A'
+        };
     }
 }
 

@@ -42,13 +42,24 @@ export async function connectDb() {
  */
 export async function initializeTokenData(pairData) {
 
-    const isValidToken = config.monitoredTokens.some(
-    t => t.address.toLowerCase() === pairData.targetTokenAddress.toLowerCase()
-    );
+    // const isValidToken = config.monitoredTokens.some(
+    // t => t.address.toLowerCase() === pairData.targetTokenAddress.toLowerCase()
+    // );
 
-    if (!isValidToken) {
+    // if (!isValidToken) {
+    //     throw new Error(`Token ${pairData.targetTokenSymbol} not in monitored list.`);
+    // }
+    const isValidToken = config.monitoredTokens
+  .filter(t => t.address) // filter out invalid ones
+  .some(
+    t =>
+      t.address.toLowerCase() === pairData.targetTokenAddress.toLowerCase()
+  );
+
+   if (!isValidToken) {
         throw new Error(`Token ${pairData.targetTokenSymbol} not in monitored list.`);
     }
+
 
     try {
         const { 
@@ -240,7 +251,7 @@ export async function updatePredictionData(pairAddress, predictionResults) {
         tokenDoc.latestXgboostPrediction = predictionResults.xgboostPrediction;
         tokenDoc.latestCombinedPrediction = predictionResults.combinedPrediction;
         // tokenDoc.target_diff_percent = predictionResults.target_diff_percent;
-        tokenDoc.target_price_usdt = predictionResults.target_price_usdt;
+        // tokenDoc.target_price_usdt = predictionResults.target_price_usdt;
         tokenDoc.PriceOfTokenAtPrediction = predictionResults.current_price_usdt;
         
         if (
@@ -345,13 +356,29 @@ export async function updateSignalHistory(pairAddress, signal) {
         if (!tokenDoc) return;
 
   // === NEW VALIDATION ===
-        const isValidToken = config.monitoredTokens.some(
-            t => t.address.toLowerCase() === tokenDoc.targetTokenAddress.toLowerCase()
+        // const isValidToken = config.monitoredTokens.some(
+        //     t => t.address.toLowerCase() === tokenDoc.targetTokenAddress.toLowerCase()
+        // );
+        // if (!isValidToken) {
+        //     console.warn(`Skipping invalid token: ${tokenDoc.targetTokenSymbol}`);
+        //     return;
+        // }
+
+
+        const validTokens = config.monitoredTokens.filter(
+  t => typeof t?.address === 'string'
         );
+
+        const isValidToken = validTokens.some(
+  t => t.address.toLowerCase() === tokenDoc.targetTokenAddress?.toLowerCase()
+        );
+
         if (!isValidToken) {
-            console.warn(`Skipping invalid token: ${tokenDoc.targetTokenSymbol}`);
-            return;
+  console.warn(`Skipping invalid token: ${tokenDoc.targetTokenSymbol}`);
+  return;
         }
+
+        
         if (tokenDoc) {
             // Ensure the signal has a timestamp, add current if not present
             const signalToStore = { ...signal, timestamp: signal.timestamp || Date.now() };

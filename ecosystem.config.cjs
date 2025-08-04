@@ -9,7 +9,7 @@ module.exports = {
     max_memory_restart: '4G', // Restart if memory exceeds 1GB
     env: {
       NODE_ENV: "production",
-      PORT: 3030, // Or whatever port is in your config/default.json
+      PORT: 3020, // Or whatever port is in your config/default.json
       MONGODB_URI: "mongodb://localhost:27017/secure_bot", // <-- REPLACE THIS
       SUBGRAPH_API_KEY: "d389ab06d04a5de3f0115d9a4da59fe8",     // <-- REPLACE THIS
       FRONTEND_VERCEL_URL: "https://pancakeswapfront.vercel.app",

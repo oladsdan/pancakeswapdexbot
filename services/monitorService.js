@@ -111,11 +111,12 @@ export async function checkPriceHits() {
             // Check if price reached target
             if (currentPrice >= monitor.targetPrice) {
                 monitor.hitStatus = 'Reached';
-                monitor.hitTime = formatForNigeria(now);
+                const {predictedDate} = getRoundedPredictionTime();
+                monitor.hitTime = formatForNigeria(predictedDate);
                 monitor.recorded = true;
                 
                 console.log(`🎯 Target hit for ${pairAddress} at ${currentPrice}`);
-                await accuracyService.recordPredictionResult(pairAddress, true);
+                await accuracyService.recordPredictionResult(pairAddress, true, monitor.predictionStart);
             } 
             // Check if prediction expired
             else if (now >= new Date(monitor.predictionExpiry)) {
@@ -124,11 +125,11 @@ export async function checkPriceHits() {
                 monitor.recorded = true;
                 
                 console.log(`⏰ Prediction expired for ${pairAddress}`);
-                await accuracyService.recordPredictionResult(pairAddress, false);
+                await accuracyService.recordPredictionResult(pairAddress, false, monitor.predictionStart);
             }
 
             // Update price difference (regardless of hit/expiry)
-            monitor.targetPriceDiff = ((monitor.targetPrice / currentPrice - 1) * 100).toFixed(2);
+            monitor.targetPriceDiff = ((monitor.targetPrice / currentPrice - 1) * 100).toFixed(3);
         } catch (error) {
             console.error(`Error monitoring ${pairAddress}:`, error);
         }
@@ -167,4 +168,33 @@ export function updateMonitorTarget(pairAddress, targetPrice, predictionStart, p
     monitor.hitTime = null;
     monitor.recorded = false; // Reset recording flag for new prediction
     monitor.targetPriceDiff = null;
+}
+
+export function cleanupAllMonitors() {
+    const now = new Date();
+    let cleanedCount = 0;
+    
+    for (const [pairAddress, monitor] of activeMonitors) {
+        // Cleanup conditions:
+        // 1. Already recorded results
+        // 2. Expired predictions (even if not recorded)
+        // 3. Stale monitors (e.g., no activity for 24 hours)
+        if (monitor.recorded || 
+            now >= new Date(monitor.predictionExpiry) || 
+            (monitor.lastChecked && now - monitor.lastChecked > 24 * 60 * 60 * 1000)) {
+            
+            // Record as missed if expired and not recorded
+            if (!monitor.recorded && now >= new Date(monitor.predictionExpiry)) {
+                accuracyService.recordPredictionResult(pairAddress, false);
+            }
+            
+            activeMonitors.delete(pairAddress);
+            cleanedCount++;
+        }
+    }
+    
+    if (cleanedCount > 0) {
+        console.log(`🧹 Cleaned up ${cleanedCount} monitors`);
+    }
+    return cleanedCount;
 }

@@ -65,7 +65,8 @@ const tokenDataSchema = new mongoose.Schema({
         currentHits: { type: Number, default: 0 },
         currentTotal: { type: Number, default: 0 },
         lastPredictionTime: { type: Date, default: Date.now },
-        lastResetTime: { type: Date, default: Date.now }
+        lastResetTime: { type: Date, default: Date.now },
+        lastRecordedPredictionStart: Date
     },
 
      // NEW: Historical signals (updated to include predictions)

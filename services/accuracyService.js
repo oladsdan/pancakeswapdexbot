@@ -6,24 +6,55 @@ let predictionPeriodCount = 0;
 const predictionPeriodStart = new Date();
 
 
+// export async function recordPredictionResult(pairAddress, wasSuccessful, predictionStart) {
+//     try {
+//         const tokenDoc = await dataService.getTokenData(pairAddress);
+//         if (!tokenDoc) return;
+
+//         const lastRecorded = tokenDoc.predictionAccuracy?.lastRecordedPredictionStart;
+
+//         // Prevent duplicate recording for the same prediction cycle
+//         if (lastRecorded && new Date(lastRecorded).getTime() === new Date(predictionStart).getTime()) {
+//             return; // Already recorded for this prediction cycle
+//         }
+
+//         tokenDoc.predictionAccuracy.currentTotal += 1;
+//         if (wasSuccessful) {
+//             tokenDoc.predictionAccuracy.currentHits += 1;
+//         }
+
+//         tokenDoc.predictionAccuracy.lastPredictionTime = new Date();
+//         tokenDoc.predictionAccuracy.lastRecordedPredictionStart = predictionStart;
+
+//         await tokenDoc.save();
+//     } catch (error) {
+//         console.error(`Error recording prediction result for ${pairAddress}:`, error);
+//     }
+// }
+
+
 // Track successful predictions
-export async function recordPredictionResult(pairAddress, wasSuccessful) {
+export async function recordPredictionResult(pairAddress, wasSuccessful, predictionStart) {
     try {
         const tokenDoc = await dataService.getTokenData(pairAddress);
         if (!tokenDoc) return;
 
           // Prevent duplicate recording
-        const lastPredictionTime = new Date(tokenDoc.predictionAccuracy.lastPredictionTime || 0);
-        if (Date.now() - lastPredictionTime < 60000) { // 1 minute cooldown
-            return;
+        // const lastPredictionTime = new Date(tokenDoc.predictionAccuracy.lastPredictionTime || 0);
+
+         const lastRecorded = tokenDoc.predictionAccuracy?.lastRecordedPredictionStart;
+         if (lastRecorded && new Date(lastRecorded).getTime() === new Date(predictionStart).getTime()) {
+            return; // Already recorded for this prediction cycle
         }
 
-        // Update current period stats
+      
         tokenDoc.predictionAccuracy.currentTotal += 1;
         if (wasSuccessful) {
             tokenDoc.predictionAccuracy.currentHits += 1;
         }
+
         tokenDoc.predictionAccuracy.lastPredictionTime = new Date();
+        tokenDoc.predictionAccuracy.lastRecordedPredictionStart = predictionStart;
 
         await tokenDoc.save();
     } catch (error) {
@@ -55,6 +86,7 @@ export async function recordPredictionResult(pairAddress, wasSuccessful) {
 //         console.error('Error rotating accuracy periods:', error);
 //     }
 // }
+//chatgpt
 export async function rotateAccuracyPeriods() {
     try {
         const allPairAddresses = await dataService.getAllPairAddresses();
@@ -72,6 +104,7 @@ export async function rotateAccuracyPeriods() {
 
             // Move current to past
             tokenData.predictionAccuracy.pastHits = tokenData.predictionAccuracy.currentHits || 0;
+            tokenData.predictionAccuracy.pastTotal = tokenData.predictionAccuracy.currentTotal || 0;
             tokenData.predictionAccuracy.currentHits = 0;
             
             await tokenData.save();
@@ -128,31 +161,47 @@ export async function rotateAccuracyPeriods() {
 // }
 
 export async function getGlobalAccuracyStats() {
+    let totalPastHits = 0;
+    let totalPastTotal = 0;
+    let totalCurrentHits = 0;
+    let totalCurrentTotal = 0;
+
+
+
+
     try {
         const allPairAddresses = await dataService.getAllPairAddresses();
-        const numTokens = allPairAddresses.length;
+        // const numTokens =  allPairAddresses.length;
+        const numTokens =98;
         
-        let totalPastHits = 0;
-        let totalCurrentHits = 0;
+        // let totalPastHits = 0;
+        // let totalCurrentHits = 0;
 
         // Get hits only (totals are based on token count × periods)
         for (const pairAddress of allPairAddresses) {
             const tokenData = await dataService.getTokenData(pairAddress);
             if (!tokenData?.predictionAccuracy) continue;
 
+            // totalPastHits += tokenData.predictionAccuracy.pastHits || 0;
+            // totalCurrentHits += tokenData.predictionAccuracy.currentHits || 0;
+
             totalPastHits += tokenData.predictionAccuracy.pastHits || 0;
+            totalPastTotal += tokenData.predictionAccuracy.pastTotal || 0;
             totalCurrentHits += tokenData.predictionAccuracy.currentHits || 0;
+            totalCurrentTotal += tokenData.predictionAccuracy.currentTotal || 0;
+
+
         }
 
         // Calculate proper denominators
-        const pastPredictionsTotal = numTokens * predictionPeriodCount;
-        const currentPredictionsTotal = numTokens; // Current period only
+        // const pastPredictionsTotal = numTokens;
+        // const currentPredictionsTotal = numTokens; // Current period only
 
         return {
-            pastAccuracy: pastPredictionsTotal > 0 
-                ? `${totalPastHits}/${pastPredictionsTotal} (${((totalPastHits/pastPredictionsTotal)*100).toFixed(2)}%)`
-                : 'N/A (No past periods)',
-            currentAccuracy: numTokens > 0
+            pastAccuracy: totalPastTotal  > 0 
+                ? `${totalPastHits}/${numTokens} (${((totalPastHits/numTokens)*100).toFixed(2)}%)`
+                : '',
+            currentAccuracy: totalCurrentTotal  > 0
                 ? `${totalCurrentHits}/${numTokens} (${((totalCurrentHits/numTokens)*100).toFixed(2)}%)`
                 : 'N/A (No tokens)',
             lastResetTime: predictionPeriodStart.toISOString(),
