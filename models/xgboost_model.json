@@ -1,1 +1,0 @@
-{"objective":"reg:squarederror","numRounds":100,"learningRate":0.1,"maxDepth":3}

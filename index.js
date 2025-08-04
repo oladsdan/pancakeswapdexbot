@@ -1,13 +1,13 @@
 // backend/index.js
 import express from 'express';
 import cors from 'cors';
-// import * as marketDataService from './services/marketDataService.js';
-// import * as dataService from './services/dataService.js';
-// import * as indicatorService from './services/indicatorService.js';
-// import * as predictionService from './services/predictionService.js';
-// import * as accuracyService from/
+import { getLogs, listenToEvents } from './eventListener.js';
+import { connectDB } from './models/ConnectDb.js';
+import axios from 'axios';
+
+
 const app = express();
-const PORT = process.env.PORT || config.apiPort;
+const PORT = process.env.PORT;
 
 
 
@@ -42,8 +42,10 @@ const corsOptions = {
     optionsSuccessStatus: 204 // Some legacy browsers (IE11, various SmartTVs) choke on 200
 };
 
-app.use(cors(corsOptions));
+app.use(cors());
 app.use(express.json());
+
+const signals = "https://bot.securearbitrage.com/api/signals";
 
 const content = `
 Why Building a DEX Bot is Difficult — and Why That’s Exactly Why It’s Profitable
@@ -121,33 +123,51 @@ And in DeFi, where the market operates 24/7 without borders, a well-built DEX bo
 
 
 
-// app.get('/api/signals', (req, res) => {
-//     // res.json(currentSignals);
-//     if (currentSignals.length === 0) {
-//         // If no signals but loop is running, implies initial generation is in progress
-//         res.status(202).json({ message: "Signals are being generated. Please wait.", status: "generating" });
-//     }
-//     else {
-//         res.json(currentSignals);
-//     }
-// });
-
-// // Add new API endpoint
-// app.get('/api/accuracy-stats', async (req, res) => {
-//     try {
-//         const stats = await accuracyService.getGlobalAccuracyStats();
-//         res.json(stats);
-//     } catch (error) {
-//         console.error('Error getting accuracy stats:', error);
-//         res.status(500).json({ error: 'Failed to get accuracy stats' });
-//     }
-// });
-
-
 app.get('/', (req, res) => {
   res.type('text/plain').send(content);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running at http://localhost:${PORT}`);
+// app.get('/apis/signals', (req, res) => {
+//    const currentSignals =axios.get(signals);
+//     res.json(currentSignals);
+  
+// });
+
+app.get('/apis/signals', async (req, res) => {
+  try {
+    const response  = await axios.get(signals);
+    res.json(response.data);
+  } catch (err) {
+    console.error("❌ Failed to fetch signals:", err.message);
+    res.status(500).json({ error: "Failed to fetch signals" });
+  }
 });
+
+app.get('/apis/contract-status', async(req, res)=> {
+     try {
+    const logs = await getLogs(); // ✅ wait for logs
+    res.json(logs);
+  } catch (err) {
+    console.error("❌ Failed to fetch logs:", err.message);
+    res.status(500).json({ error: "Failed to fetch trade logs" });
+  }
+
+});
+
+(async () => {
+  try {
+    await connectDB();               // connect MongoDB
+    listenToEvents();                 // start listening to contract events
+
+    app.listen(PORT || 5001, () => {
+      console.log(`🚀 API running on port ${PORT || 5001}`);
+    });
+  } catch (err) {
+    console.error("❌ Failed to start app:", err.message);
+    process.exit(1); // Exit process on startup failure
+  }
+})();
+
+// app.listen(PORT, () => {
+//   console.log(`Server is running at http://localhost:${PORT}`);
+// });
