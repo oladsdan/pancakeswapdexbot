@@ -1,4 +1,4 @@
-import {ethers, formatUnits} from 'ethers';
+import {ethers, formatEther, formatUnits} from 'ethers';
 import ABI from "./contracts/AutomatedTradingBot.json" assert { type: "json" };
 import TradeLog from './models/TradeLog.js';
 import dotenv from 'dotenv';
@@ -90,6 +90,8 @@ function setupListeners() {
   contract.on('TokenBought', async (tokenIn, amountIn, tokenOut, amountOut, event) => {
     const readableIn = formatUnits(amountIn, 18);
     const readableOut = formatUnits(amountOut, 18);
+    const amountBought = formatEther(amountOut / amountIn);
+
     // tradeLogs.push({
     const logs = {
       type: 'Buy',
@@ -98,7 +100,8 @@ function setupListeners() {
       tokenOut,
       amountOut: readableOut,
       timestamp: Date.now(),
-      txHash: event.log.transactionHash,
+      amountBought,
+      txHash: event.log.transactionHash
     };
     console.log(`🟢 BuyExecuted: ${tokenOut}`);
     await logToDB(logs);

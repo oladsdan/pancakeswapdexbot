@@ -10,6 +10,7 @@ const tradeLogSchema = new mongoose.Schema({
   amountIn: String,
   amountOut: String,
   amount: String,
+  amountBought: String,
   txHash: { type: String, required: true, index: true },
   timestamp: { type: Number, default: Date.now }
 });
